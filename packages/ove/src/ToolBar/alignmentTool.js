@@ -174,10 +174,22 @@ class AlignmentTool extends React.Component {
 
     // const j5server = process.env.REMOTE_J5 || "http://j5server.teselagen.com"
 
+    // OpenGene fork: external alignment server removed (phones-home policy,
+    // SPEC §5). Alignment must be performed by the host application's
+    // Python alignment engines via window.OpenGeneBridge.align(...).
+    if (typeof window.OpenGeneBridge !== "object" ||
+        typeof window.OpenGeneBridge.align !== "function") {
+      window.toastr.error(
+        "Alignment is not available: the host application's alignment " +
+        "engine is not connected. The OpenGene fork removed the legacy " +
+        "remote alignment server."
+      );
+      throw new Error(
+        "OpenGeneBridge.align is not wired; remote alignment is disabled."
+      );
+    }
+
     window.toastr.success("Alignment submitted.");
-    const replaceProtocol = url => {
-      return url.replace("http://", window.location.protocol + "//");
-    };
 
     const seqInfoToSend = seqsToAlign.map(({ sequence, name, id }) => {
       return {
@@ -191,18 +203,11 @@ class AlignmentTool extends React.Component {
       alignedSequences: _alignedSequences,
       pairwiseAlignments,
       alignmentsToRefSeq
-    } = await (
-      await fetch({
-        url: replaceProtocol("http://j5server.teselagen.com/alignment/run"),
-        method: "post",
-        body: JSON.stringify({
-          //only send over the bear necessities :)
-          sequencesToAlign: seqInfoToSend,
-          isPairwiseAlignment,
-          isAlignToRefSeq
-        })
-      })
-    ).json();
+    } = await window.OpenGeneBridge.align({
+      sequencesToAlign: seqInfoToSend,
+      isPairwiseAlignment,
+      isAlignToRefSeq
+    });
 
     // alignmentsToRefSeq set to alignedSequences for now
     let alignedSequences = _alignedSequences;

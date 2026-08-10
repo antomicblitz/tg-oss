@@ -9,6 +9,7 @@ import addAlignment from "../addAlignment";
 import AlignmentView from "../AlignmentView";
 import sizeMe from "react-sizeme";
 import VersionHistoryView from "../VersionHistoryView";
+import __OVE_EXTERNAL_AUTHORITY__ from "../redux/externalAuthorityInstall.js";
 
 let store;
 
@@ -136,3 +137,11 @@ export function createAlignmentView(node, props = {}) {
 window.createVectorEditor = createVectorEditor;
 window.createAlignmentView = createAlignmentView;
 window.createVersionHistoryView = createVersionHistoryView;
+// External-authority glue (slice 1a + slice 14 host-page wire-up).
+// The host page calls ``window.__OVE_EXTERNAL_AUTHORITY__.install({...})``
+// after the QWebChannel handshake; ``makeStore.js`` reads
+// ``createMiddleware()`` on every store creation and inserts the
+// middleware into the chain when one is configured. Standalone OVE
+// (no install call) still works because ``isConfigured()`` returns
+// false and ``makeStore.js`` skips the slot.
+window.__OVE_EXTERNAL_AUTHORITY__ = __OVE_EXTERNAL_AUTHORITY__;

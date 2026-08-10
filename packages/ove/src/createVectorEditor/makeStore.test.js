@@ -24,10 +24,12 @@ import { createMockAuthority } from "../redux/__mocks__/mockAuthority.js";
 import { install, uninstall } from "../redux/externalAuthorityInstall.js";
 
 const loadMakeStore = async () => {
-  // ``makeStore.js`` captures ``window.__OVE_EXTERNAL_AUTHORITY__``
-  // at module-eval time, so we have to publish the helper on the
-  // global object BEFORE the module is imported. The JSDOM preload
-  // in test-setup.js sets ``global.window`` per test; the helper's
+  // ``makeStore.js`` reads ``window.__OVE_EXTERNAL_AUTHORITY__``
+  // lazily on every ``makeStore()`` call, so the lookup is robust
+  // to load-order changes. We still publish the helper on the
+  // global object before importing ``makeStore.js`` so the module
+  // sees the namespace in its first call. The JSDOM preload in
+  // test-setup.js sets ``global.window`` per test; the helper's
   // ``createMiddleware()`` reads ``configuredOptions`` lazily so a
   // re-install is picked up by the next store creation.
   global.window.__OVE_EXTERNAL_AUTHORITY__ = (

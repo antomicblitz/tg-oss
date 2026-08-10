@@ -12,6 +12,13 @@ import { reducer as form } from "redux-form";
 // the install helper without touching the middleware itself.
 const externalAuthority = window.__OVE_EXTERNAL_AUTHORITY__;
 
+// One-shot warning so a misordered host page (``createVectorEditor``
+// called before ``install``) doesn't silently bypass the slice 1a
+// external-authority middleware. The warning fires once per page
+// load — repeating it on every ``makeStore`` call would flood the
+// console when OVE creates and destroys stores internally.
+let warnedAboutMissingAuthority = false;
+
 const makeStore = () => {
   const composeEnhancer =
     (window.__REDUX_DEVTOOLS_EXTENSION_COMPOSE__ &&
@@ -27,17 +34,37 @@ const makeStore = () => {
     compose;
 
   // Build the middleware chain every time ``makeStore`` runs so a
-  // later ``install()`` (e.g. via test teardown) is picked up by
-  // the next store creation. This keeps the host-page lifecycle
-  // simple: it can install the authority AFTER the page is rendered
-  // and before any subsequent ``createVectorEditor`` call.
+  // later ``install()`` (e.g. via test teardown) is picked up by the
+  // next store creation. This keeps the host-page lifecycle simple:
+  // it can install the authority AFTER the page is rendered and
+  // before any subsequent ``createVectorEditor`` call.
   const middlewares = [thunk, vectorEditorMiddleware];
   if (
     externalAuthority &&
     typeof externalAuthority.createMiddleware === "function"
   ) {
     const externalMw = externalAuthority.createMiddleware();
-    if (externalMw) middlewares.push(externalMw);
+    if (externalMw) {
+      middlewares.push(externalMw);
+    } else if (
+      typeof externalAuthority.isConfigured === "function" &&
+      !externalAuthority.isConfigured() &&
+      !warnedAboutMissingAuthority
+    ) {
+      // The host page is present (the install helper is on window)
+      // but no ``install()`` call has been made yet. The store will
+      // run standalone; every mutation will apply locally and never
+      // reach the host's authority. Surface this as a warning so
+      // the host-page developer can fix the order.
+      warnedAboutMissingAuthority = true;
+      console.warn(
+        "[OVE] window.__OVE_EXTERNAL_AUTHORITY__ is exposed but install() " +
+          "has not been called. Mutating Redux actions will apply locally " +
+          "without bouncing through the host's authority. Call " +
+          "window.__OVE_EXTERNAL_AUTHORITY__.install({...}) BEFORE " +
+          "createVectorEditor(...) to enable the slice 1a middleware."
+      );
+    }
   }
 
   const store = createStore(

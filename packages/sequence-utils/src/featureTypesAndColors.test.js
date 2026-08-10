@@ -4,6 +4,19 @@ import {
   getMergedFeatureMap,
   getGenbankFeatureToColorMap
 } from "./featureTypesAndColors";
+import { describe, it, expect, afterEach } from "bun:test";
+
+// ``getMergedFeatureMap`` reads ``global.tg_featureTypeOverrides``
+// as an integration hook. The tests below set it but never
+// clear it, so the override leaks into every subsequent test in
+// the same process — most visibly into
+// ``tidyUpSequenceData.test.js`` where a CDS feature expects the
+// default color ``#EF6500`` but receives the overridden ``blue``.
+// ``afterEach`` restores the empty default so each test starts
+// from the same baseline.
+afterEach(() => {
+  delete global.tg_featureTypeOverrides;
+});
 
 describe("getFeatureToColorMap", () => {
   it("should pass back feature colors by default ", () => {

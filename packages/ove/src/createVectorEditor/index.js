@@ -82,6 +82,19 @@ export default function createVectorEditor(
   editor.getState = () => {
     return store.getState().VectorEditor[editorName];
   };
+  // Expose ``dispatch`` so the embedding host page (e.g.
+  // ``web/ove-host/src/host.js``) can drive OVE mutations through
+  // the full middleware chain. The slice 1a external-authority
+  // middleware lives in the chain between ``dispatch`` and the
+  // reducer; calling ``editor.dispatch`` from the host page is
+  // what actually exercises the middleware end-to-end.
+  // ``updateEditor`` skips the middleware on purpose (it dispatches
+  // ``VECTOR_EDITOR_UPDATE`` which is not in the middleware's
+  // mutation list), so the host page still uses
+  // ``updateEditor`` for setting the initial snapshot.
+  editor.dispatch = action => {
+    return store.dispatch(action);
+  };
 
   return editor;
 }

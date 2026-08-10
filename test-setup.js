@@ -25,6 +25,7 @@ beforeEach(() => {
   global.document = document;
   global.navigator = jsdomInstance.window.navigator;
   global.HTMLElement = jsdomInstance.window.HTMLElement;
+  global.HTMLAnchorElement = jsdomInstance.window.HTMLAnchorElement;
   global.customElements = jsdomInstance.window.customElements;
   global.DocumentFragment = jsdomInstance.window.DocumentFragment;
   global.KeyboardEvent = jsdomInstance.window.KeyboardEvent;

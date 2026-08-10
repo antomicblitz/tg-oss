@@ -4,19 +4,20 @@ import VectorEditor, { vectorEditorMiddleware } from "../redux";
 import thunk from "redux-thunk";
 import { reducer as form } from "redux-form";
 
-// Read the external-authority middleware factory from the global
-// install namespace. ``createMiddleware()`` returns ``null`` when no
-// host has called ``install()``, in which case the chain stays as
-// upstream OVE (thunk + vectorEditorMiddleware) and the store runs
-// standalone. ``isConfigured()`` is also exported so tests can assert
-// the install helper without touching the middleware itself.
-const externalAuthority = window.__OVE_EXTERNAL_AUTHORITY__;
-
 // One-shot warning so a misordered host page (``createVectorEditor``
 // called before ``install``) doesn't silently bypass the slice 1a
 // external-authority middleware. The warning fires once per page
 // load — repeating it on every ``makeStore`` call would flood the
 // console when OVE creates and destroys stores internally.
+//
+// NOTE on the install-namespace lookup: we read
+// ``window.__OVE_EXTERNAL_AUTHORITY__`` *inside* ``makeStore`` rather
+// than at module top. The previous module-eval capture broke
+// refactors that move the ``createVectorEditor/index.js``
+// side-effect that publishes the namespace — the module would
+// capture ``undefined`` and the middleware would silently never
+// wire. Reading at call-site is a one-property-access penalty per
+// store creation and is robust to load-order changes.
 let warnedAboutMissingAuthority = false;
 
 const makeStore = () => {
@@ -32,6 +33,11 @@ const makeStore = () => {
         actionsDenylist: []
       })) ||
     compose;
+
+  // Read the install namespace lazily so the lookup is robust
+  // to UMD-wrapper side-effect ordering. ``createMiddleware()``
+  // returns ``null`` when no host has called ``install()``.
+  const externalAuthority = window.__OVE_EXTERNAL_AUTHORITY__;
 
   // Build the middleware chain every time ``makeStore`` runs so a
   // later ``install()`` (e.g. via test teardown) is picked up by the

@@ -195,4 +195,65 @@ describe("makeStore — external-authority middleware wiring (slice 1a integrati
       makeStore();
     }).not.toThrow();
   });
+
+  it("reads the install namespace lazily on every makeStore() call", async () => {
+    // The previous module-eval capture of
+    // ``window.__OVE_EXTERNAL_AUTHORITY__`` broke refactors that
+    // move the side-effect that publishes the namespace. The fix
+    // reads the namespace lazily on every ``makeStore()`` call,
+    // so a host page that calls ``install()`` AFTER the module
+    // loads but BEFORE ``createVectorEditor()`` is still wired.
+    //
+    // This test simulates that pattern: start with no namespace,
+    // call makeStore (no middleware), publish the namespace
+    // AFTER, then call makeStore again — the second call MUST
+    // see the middleware in the chain.
+    delete global.window.__OVE_EXTERNAL_AUTHORITY__;
+    uninstall();
+    const makeStore = (await import("../createVectorEditor/makeStore.js"))
+      .default;
+
+    // First call — no namespace published, no middleware wired.
+    const store1 = makeStore();
+    expect(store1).toBeDefined();
+
+    // Now publish the namespace AFTER makeStore.js has loaded.
+    global.window.__OVE_EXTERNAL_AUTHORITY__ = (
+      await import("../redux/externalAuthorityInstall.js")
+    ).default;
+
+    // Second call — the namespace is now visible, but the
+    // namespace was published AFTER makeStore.js was loaded. The
+    // lazy capture must pick it up.
+    const authority = createMockAuthority({
+      documentId: "doc-lazy",
+      initial: { sequence: "AAAA", circular: false }
+    });
+    install({
+      documentId: "doc-lazy",
+      surfaceId: "surface-lazy",
+      revision: () => authority.revision(),
+      submit: async request => authority.submit(request),
+      applySnapshot: snapshot => {
+        void snapshot;
+      },
+      onResponse: response => {
+        void response;
+      }
+    });
+
+    const store2 = makeStore();
+    expect(store2).toBeDefined();
+
+    // Dispatch a known-op action through the second store. The
+    // mock authority MUST receive the request — the only path is
+    // through the middleware, which the lazy capture just wired.
+    store2.dispatch({
+      type: "REPLACE_BPS",
+      payload: { start: 0, end: 4, replacement: "TTTT" }
+    });
+    await new Promise(r => setTimeout(r, 0));
+    expect(authority.revision()).toBe(1);
+    expect(authority.snapshot().sequence).toBe("TTTT");
+  });
 });

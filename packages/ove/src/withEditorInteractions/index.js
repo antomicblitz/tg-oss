@@ -30,6 +30,7 @@ import getCommands from "../commands";
 import moveCaret from "./moveCaret";
 import createSequenceInputPopup from "./createSequenceInputPopup";
 import Keyboard from "./Keyboard";
+import { buildInsertOrReplaceMutation } from "./openGeneMutation";
 import {
   handleCaretMoved,
   editorClicked,
@@ -1339,43 +1340,14 @@ const insertAndSelectHelper = async ({ seqDataToInsert, props }) => {
   }
   // Reason: the gesture knows the exact caret/selection and the inserted
   // residues, so carry the precise mutation instead of letting the authority
-  // infer it from a repeated-base-ambiguous full snapshot. A fragment that
-  // also carries annotations is a compound update the wire protocol cannot
-  // apply atomically; mark it so the authority rejects it explicitly rather
-  // than silently dropping the annotations.
-  const insertedResidues = seqDataToInsert.sequence || "";
-  const hasAnnotations =
-    (Array.isArray(seqDataToInsert.features) &&
-      seqDataToInsert.features.length > 0) ||
-    (Array.isArray(seqDataToInsert.primers) &&
-      seqDataToInsert.primers.length > 0);
-  let openGeneMutation;
-  if (caretPosition > -1) {
-    openGeneMutation = {
-      operation: "insert_bases",
-      payload: { position: caretPosition, residues: insertedResidues }
-    };
-  } else if (selectionLayer && selectionLayer.start >= 0) {
-    openGeneMutation = {
-      operation: "replace_bases",
-      payload: {
-        start: selectionLayer.start,
-        end: selectionLayer.end + 1,
-        replacement: insertedResidues
-      }
-    };
-  }
-  if (openGeneMutation && hasAnnotations) {
-    // Reason: the fragment's annotations are fragment-relative. Forward only
-    // those deltas (not the full already-remapped molecule) so Python applies
-    // the residue edit and the inserted annotations in one transaction.
-    openGeneMutation.features = Array.isArray(seqDataToInsert.features)
-      ? seqDataToInsert.features
-      : [];
-    openGeneMutation.primers = Array.isArray(seqDataToInsert.primers)
-      ? seqDataToInsert.primers
-      : [];
-  }
+  // infer it from a repeated-base-ambiguous full snapshot. Fragment
+  // annotations travel with the residue edit so Python applies both
+  // atomically; the accepted canonical snapshot then replaces the local full
+  // snapshot.
+  const openGeneMutation = buildInsertOrReplaceMutation(seqDataToInsert, {
+    caretPosition,
+    selectionLayer
+  });
   updateSequenceData(
     newSeqData,
     openGeneMutation ? { openGeneMutation } : undefined

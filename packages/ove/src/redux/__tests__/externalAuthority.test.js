@@ -623,6 +623,76 @@ describe("real OVE action routing", () => {
     expect(applied[0].sequence).toBe("GCTT");
   });
 
+  it("routes an IUPAC reverse complement as reverse_complement", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGTRYKMBDHVN", circular: false }
+    });
+    const operations = [];
+    const { mw, applied } = makeRealActionMiddleware(authority, {
+      submit: async request => {
+        operations.push(request.operation);
+        return authority.submit(request);
+      }
+    });
+    const { next, seen } = recordingNext();
+
+    // Python/OVE reverse-complement the IUPAC codes as R<->Y, K<->M,
+    // B<->V, D<->H. Treating them as unknown characters would fall through
+    // to a full-span replace_bases, which drops annotation remapping.
+    await mw(next)({
+      type: "SEQUENCE_DATA_UPDATE",
+      meta: { editorName: "main" },
+      payload: { sequence: "NBDHVKMRYACGT" }
+    });
+
+    expect(operations).toEqual(["reverse_complement"]);
+    expect(seen.length).toBe(0);
+    expect(authority.snapshot().sequence).toBe("NBDHVKMRYACGT");
+    expect(applied.length).toBe(1);
+    expect(applied[0].sequence).toBe("NBDHVKMRYACGT");
+  });
+
+  it("rejects a whole-molecule complement instead of dropping annotations", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: {
+        sequence: "AAGC",
+        circular: false,
+        features: [{ id: "f-1", start: 0, end: 2, name: "kept", strand: 1 }]
+      }
+    });
+    const submissions = [];
+    const responses = [];
+    const { mw, applied } = makeRealActionMiddleware(authority, {
+      submit: async request => {
+        submissions.push(request);
+        return authority.submit(request);
+      },
+      onResponse: response => responses.push(response)
+    });
+    const { next, seen } = recordingNext();
+
+    // The complement of AAGC is TTCG. It preserves coordinates but flips
+    // annotation strands; routing it as replace_bases would drop features
+    // that only partially overlap the full-span replacement.
+    await mw(next)({
+      type: "SEQUENCE_DATA_UPDATE",
+      meta: { editorName: "main" },
+      payload: { sequence: "TTCG" }
+    });
+
+    expect(submissions).toHaveLength(0);
+    expect(seen[0].type).toBe("SEQUENCE_DATA_UPDATE_REJECTED");
+    expect(seen[0].payload.message).toMatch(/complement/);
+    expect(responses[0].status).toBe("rejected");
+    expect(responses[0].message).toMatch(/complement/);
+    expect(authority.revision()).toBe(0);
+    expect(authority.snapshot().features).toHaveLength(1);
+    expect(applied.length).toBe(1);
+    expect(applied[0].sequence).toBe("AAGC");
+  });
+
   it("routes SET_ORIGIN as rotate_origin and swallows the follow-up snapshot", async () => {
     const authority = createMockAuthority({
       documentId: "doc-1",
@@ -763,6 +833,10 @@ describe("real OVE action routing", () => {
       ],
       primers: [{ id: "p-new", name: "new primer", sequence: "TT" }]
     });
+    // The mock now reads the Python `residues` field, so this proves the
+    // accepted insert actually reached the canonical sequence rather than
+    // silently inserting an empty string.
+    expect(authority.snapshot().sequence).toBe("ACTTGT");
   });
 
   it("routes a multi-id DELETE_FEATURE as one transaction", async () => {

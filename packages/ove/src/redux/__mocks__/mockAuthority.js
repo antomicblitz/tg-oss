@@ -42,7 +42,24 @@ export const AckStatus = Object.freeze({
 });
 
 const PROTOCOL_VERSION = 1;
-const VALID_RESIDUES = new Set(["A", "C", "G", "T", "U", "N"]);
+const VALID_RESIDUES = new Set([
+  "A",
+  "C",
+  "G",
+  "T",
+  "U",
+  "N",
+  "R",
+  "Y",
+  "S",
+  "W",
+  "K",
+  "M",
+  "B",
+  "D",
+  "H",
+  "V"
+]);
 const MUTATING_OPS = new Set([
   OperationKind.REPLACE_BASES,
   OperationKind.INSERT_BASES,
@@ -55,6 +72,25 @@ const MUTATING_OPS = new Set([
   OperationKind.SET_CIRCULAR,
   OperationKind.ROTATE_ORIGIN
 ]);
+
+const IUPAC_COMPLEMENT = Object.freeze({
+  A: "T",
+  T: "A",
+  C: "G",
+  G: "C",
+  U: "A",
+  N: "N",
+  R: "Y",
+  Y: "R",
+  S: "S",
+  W: "W",
+  K: "M",
+  M: "K",
+  B: "V",
+  V: "B",
+  D: "H",
+  H: "D"
+});
 
 let _txnCounter = 0;
 function nextTransactionId() {
@@ -197,7 +233,11 @@ export function createMockAuthority(options) {
         });
       }
       case OperationKind.INSERT_BASES: {
-        const { position, sequence } = payload;
+        const { position } = payload;
+        // Python's wire schema uses `residues`. Keep accepting the older
+        // `sequence` field so historical mock fixtures still round-trip.
+        const residues =
+          payload.residues !== undefined ? payload.residues : payload.sequence;
         if (
           typeof position !== "number" ||
           position < 0 ||
@@ -207,12 +247,12 @@ export function createMockAuthority(options) {
             message: `insert_bases position out of bounds: ${position}`
           });
         }
-        if (!isValidResidues(sequence || "")) {
+        if (!isValidResidues(residues || "")) {
           return buildResponse(req, AckStatus.REJECTED, {
-            message: `insert_bases invalid residue in ${JSON.stringify(sequence)}`
+            message: `insert_bases invalid residue in ${JSON.stringify(residues)}`
           });
         }
-        const insert = String(sequence).toUpperCase();
+        const insert = String(residues || "").toUpperCase();
         state.sequence =
           state.sequence.slice(0, position) +
           insert +
@@ -271,11 +311,10 @@ export function createMockAuthority(options) {
       }
       case OperationKind.REVERSE_COMPLEMENT: {
         const length = state.sequence.length;
-        const complement = { A: "T", T: "A", C: "G", G: "C", U: "A", N: "N" };
         state.sequence = state.sequence
           .split("")
           .reverse()
-          .map(ch => complement[ch] || ch)
+          .map(ch => IUPAC_COMPLEMENT[ch] || ch)
           .join("");
         for (const f of state.features) {
           const start = length - f.end;

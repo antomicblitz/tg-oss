@@ -160,19 +160,59 @@ export function diffResidues(oldSequence, newSequence) {
   };
 }
 
+// Full IUPAC complement table, matching
+// `opengene.services.sequence_ops.reverse_complement` and OVE's
+// `DNAComplementMap`. Both cases are preserved: Python's reverse complement
+// keeps lowercase residues, and OVE's sequence-utils map does the same.
 const COMPLEMENT = Object.freeze({
   A: "T",
   T: "A",
   C: "G",
   G: "C",
   U: "A",
-  N: "N"
+  N: "N",
+  R: "Y",
+  Y: "R",
+  S: "S",
+  W: "W",
+  K: "M",
+  M: "K",
+  B: "V",
+  V: "B",
+  D: "H",
+  H: "D",
+  a: "t",
+  t: "a",
+  c: "g",
+  g: "c",
+  u: "a",
+  n: "n",
+  r: "y",
+  y: "r",
+  s: "s",
+  w: "w",
+  k: "m",
+  m: "k",
+  b: "v",
+  v: "b",
+  d: "h",
+  h: "d",
+  ".": "."
 });
+
+function complement(sequence) {
+  let out = "";
+  for (let i = 0; i < sequence.length; i += 1) {
+    const base = sequence[i];
+    out += COMPLEMENT[base] || base;
+  }
+  return out;
+}
 
 function reverseComplement(sequence) {
   let out = "";
   for (let i = sequence.length - 1; i >= 0; i -= 1) {
-    const base = sequence[i].toUpperCase();
+    const base = sequence[i];
     out += COMPLEMENT[base] || base;
   }
   return out;
@@ -368,6 +408,19 @@ function buildRealRequest(action, canonicalSequence) {
       // `replace_bases` would leave them wrong.
       if (reverseComplement(canonicalSequence) === newSequence) {
         return { operation: "reverse_complement", payload: {} };
+      }
+      // Reason: a whole-molecule complement preserves residue coordinates but
+      // flips annotation strands. The wire protocol has no `complement`
+      // operation, and routing it as replace_bases would drop features that
+      // only partially overlap the full-span replacement. Reject it with a
+      // diagnostic until the editing seam can carry both changes atomically.
+      if (complement(canonicalSequence) === newSequence) {
+        return {
+          error:
+            "SEQUENCE_DATA_UPDATE is a whole-molecule complement with " +
+            "annotation strand changes; the wire protocol has no complement " +
+            "operation"
+        };
       }
       // Reason: an origin rotation is ambiguous on repeated residues, so the
       // OVE command dispatches an explicit `SET_ORIGIN` action first and the

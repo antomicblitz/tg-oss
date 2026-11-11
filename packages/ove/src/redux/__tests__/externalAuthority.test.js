@@ -539,7 +539,10 @@ describe("real OVE action routing", () => {
       documentId: "doc-1",
       initial: { sequence: "ACGT", circular: false }
     });
-    const { mw, applied } = makeRealActionMiddleware(authority);
+    const responses = [];
+    const { mw, applied } = makeRealActionMiddleware(authority, {
+      onResponse: response => responses.push(response)
+    });
     const { next, seen } = recordingNext();
 
     await mw(next)({
@@ -559,6 +562,9 @@ describe("real OVE action routing", () => {
     expect(seen.length).toBe(1);
     expect(seen[0].type).toBe("SEQUENCE_DATA_UPDATE_REJECTED");
     expect(seen[0].payload.message).toMatch(/fragment insert/);
+    expect(responses).toHaveLength(1);
+    expect(responses[0].status).toBe("rejected");
+    expect(responses[0].message).toMatch(/fragment insert/);
     expect(authority.revision()).toBe(0);
     expect(applied.length).toBe(1);
     expect(applied[0].sequence).toBe("ACGT");

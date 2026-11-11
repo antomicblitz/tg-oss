@@ -587,9 +587,21 @@ export function createExternalAuthorityMiddleware(options) {
           const built = buildRealRequest(action, canonicalSequenceGetter());
           if (built.error) {
             // Unsupported simultaneous mutation: never let the divergent
-            // local snapshot overwrite Python's canonical annotations.
-            applyCanonical(null);
-            return next(rejectedAction(action, null, null, built.error));
+            // local snapshot overwrite Python's canonical annotations. This
+            // is a local validation rejection (no bridge request was sent),
+            // but still notify the host so it can show the accessible
+            // "Edit not applied" banner instead of silently dropping the
+            // user's action.
+            const response = {
+              transaction_id: null,
+              status: "rejected",
+              new_revision: revisionGetter(),
+              canonical_snapshot: canonicalSnapshotGetter(),
+              message: built.error
+            };
+            if (onResponse) onResponse(response);
+            applyCanonical(response);
+            return next(rejectedAction(action, null, response, built.error));
           }
           operation = built.operation;
           payload = built.payload;

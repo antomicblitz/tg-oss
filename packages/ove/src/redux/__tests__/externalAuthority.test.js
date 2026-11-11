@@ -462,12 +462,18 @@ describe("real OVE action routing", () => {
     expect(applied[0].sequence).toBe("ACGT");
   });
 
-  it("rejects a reverse-complement SEQUENCE_DATA_UPDATE instead of corrupting annotations", async () => {
+  it("routes a reverse-complement SEQUENCE_DATA_UPDATE as reverse_complement", async () => {
     const authority = createMockAuthority({
       documentId: "doc-1",
       initial: { sequence: "AAGC", circular: false }
     });
-    const { mw, applied } = makeRealActionMiddleware(authority);
+    const operations = [];
+    const { mw, applied } = makeRealActionMiddleware(authority, {
+      submit: async request => {
+        operations.push(request.operation);
+        return authority.submit(request);
+      }
+    });
     const { next, seen } = recordingNext();
 
     // Reverse complement of AAGC is GCTT.
@@ -477,15 +483,49 @@ describe("real OVE action routing", () => {
       payload: { sequence: "GCTT" }
     });
 
-    expect(seen.length).toBe(1);
-    expect(seen[0].type).toBe("SEQUENCE_DATA_UPDATE_REJECTED");
-    expect(seen[0].payload.message).toMatch(/reverse complement/);
-    expect(authority.revision()).toBe(0);
+    expect(operations).toEqual(["reverse_complement"]);
+    expect(seen.length).toBe(0);
+    expect(authority.revision()).toBe(1);
     expect(applied.length).toBe(1);
-    expect(applied[0].sequence).toBe("AAGC");
+    expect(applied[0].sequence).toBe("GCTT");
   });
 
-  it("rejects an origin-rotation SEQUENCE_DATA_UPDATE instead of corrupting annotations", async () => {
+  it("routes SET_ORIGIN as rotate_origin and swallows the follow-up snapshot", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGTACGT", circular: true }
+    });
+    const operations = [];
+    const { mw, applied } = makeRealActionMiddleware(authority, {
+      submit: async request => {
+        operations.push(request.operation);
+        return authority.submit(request);
+      }
+    });
+    const { next, seen } = recordingNext();
+
+    // The OVE command dispatches both synchronously: the explicit origin
+    // action, then the local rotated full snapshot.
+    const originPromise = mw(next)({
+      type: "SET_ORIGIN",
+      meta: { editorName: "main" },
+      payload: { new_origin: 2 }
+    });
+    const snapshotPromise = mw(next)({
+      type: "SEQUENCE_DATA_UPDATE",
+      meta: { editorName: "main" },
+      payload: { sequence: "GTACGTAC", circular: true }
+    });
+    await Promise.all([originPromise, snapshotPromise]);
+
+    expect(operations).toEqual(["rotate_origin"]);
+    expect(seen.length).toBe(0);
+    expect(authority.revision()).toBe(1);
+    expect(applied.length).toBe(1);
+    expect(applied[0].sequence).toBe("GTACGTAC");
+  });
+
+  it("rejects a bare origin-rotation snapshot without an explicit SET_ORIGIN", async () => {
     const authority = createMockAuthority({
       documentId: "doc-1",
       initial: { sequence: "ACGTACGT", circular: true }
@@ -501,7 +541,7 @@ describe("real OVE action routing", () => {
 
     expect(seen.length).toBe(1);
     expect(seen[0].type).toBe("SEQUENCE_DATA_UPDATE_REJECTED");
-    expect(seen[0].payload.message).toMatch(/origin rotation/);
+    expect(seen[0].payload.message).toMatch(/SET_ORIGIN/);
     expect(authority.revision()).toBe(0);
     expect(applied.length).toBe(1);
     expect(applied[0].sequence).toBe("ACGTACGT");

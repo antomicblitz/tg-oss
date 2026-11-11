@@ -370,8 +370,12 @@ export default compose(
           options
         } = props.beforeSequenceInsertOrDelete
           ? (await props.beforeSequenceInsertOrDelete(
-              tidyUpSequenceData(_sequenceDataToInsert, { getAcceptedInsertChars: props.getAcceptedInsertChars }),
-              tidyUpSequenceData(_existingSequenceData, { getAcceptedInsertChars: props.getAcceptedInsertChars }),
+              tidyUpSequenceData(_sequenceDataToInsert, {
+                getAcceptedInsertChars: props.getAcceptedInsertChars
+              }),
+              tidyUpSequenceData(_existingSequenceData, {
+                getAcceptedInsertChars: props.getAcceptedInsertChars
+              }),
               _caretPositionOrRange,
               _options
             )) || {}
@@ -474,12 +478,25 @@ export default compose(
         readOnly,
         sequenceData,
         updateSequenceData,
-        caretPositionUpdate
+        caretPositionUpdate,
+        dispatch
       } = props;
       if (readOnly) {
         return;
       }
       if (caretPosition < 0) return;
+      // Reason: a rotated full snapshot is ambiguous on repeated residues, so
+      // the external authority cannot infer the origin safely. Dispatch an
+      // explicit action carrying the origin; the authority routes it to the
+      // canonical `rotate_origin` operation and swallows the follow-up
+      // `SEQUENCE_DATA_UPDATE`. Standalone OVE ignores the unknown action and
+      // applies the local rotation below as before.
+      if (dispatch) {
+        dispatch({
+          type: "SET_ORIGIN",
+          payload: { new_origin: caretPosition }
+        });
+      }
       updateSequenceData(
         rotateSequenceDataToPosition(sequenceData, caretPosition)
       );
@@ -559,10 +576,11 @@ const getEditorState = createSelector(
   (state, editorName) => editorName,
   (VectorEditor, editorName) => {
     const editorState = VectorEditor[editorName];
-    editorState && (editorState.editorSize =  Object.values(VectorEditor).filter(
-    editorItem => editorItem?.sequenceData
-  ).length);
-  return editorState;
+    editorState &&
+      (editorState.editorSize = Object.values(VectorEditor).filter(
+        editorItem => editorItem?.sequenceData
+      ).length);
+    return editorState;
   }
 );
 
@@ -634,7 +652,7 @@ function mapStateToProps(state, ownProps) {
   const selectedCutsites = s.selectedCutsitesSelector(editorState);
   const allCutsites = s.cutsitesSelector(
     editorState,
-    ownProps.additionalEnzymes,
+    ownProps.additionalEnzymes
   );
 
   const { matchedSearchLayer, searchLayers, matchesTotal } =
@@ -899,7 +917,7 @@ export function getShowGCContent(state, ownProps) {
 }
 
 function jsonToJson(incomingJson, options) {
-  const {getAcceptedInsertChars} = options || {};
+  const { getAcceptedInsertChars } = options || {};
   return JSON.stringify(
     omit(
       cleanUpTeselagenJsonForExport(

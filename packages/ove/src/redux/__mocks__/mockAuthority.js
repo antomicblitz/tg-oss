@@ -20,6 +20,7 @@ export const OperationKind = Object.freeze({
   REPLACE_BASES: "replace_bases",
   INSERT_BASES: "insert_bases",
   DELETE_BASES: "delete_bases",
+  REVERSE_COMPLEMENT: "reverse_complement",
   SELECTION_UPDATE: "selection_update",
   CARET_UPDATE: "caret_update",
   UPSERT_FEATURE: "upsert_feature",
@@ -46,6 +47,7 @@ const MUTATING_OPS = new Set([
   OperationKind.REPLACE_BASES,
   OperationKind.INSERT_BASES,
   OperationKind.DELETE_BASES,
+  OperationKind.REVERSE_COMPLEMENT,
   OperationKind.UPSERT_FEATURE,
   OperationKind.DELETE_FEATURE,
   OperationKind.UPSERT_PRIMER,
@@ -267,6 +269,31 @@ export function createMockAuthority(options) {
           message: `deleted ${length} bp at [${start}, ${end})`
         });
       }
+      case OperationKind.REVERSE_COMPLEMENT: {
+        const length = state.sequence.length;
+        const complement = { A: "T", T: "A", C: "G", G: "C", U: "A", N: "N" };
+        state.sequence = state.sequence
+          .split("")
+          .reverse()
+          .map(ch => complement[ch] || ch)
+          .join("");
+        for (const f of state.features) {
+          const start = length - f.end;
+          const end = length - f.start;
+          f.start = start;
+          f.end = end;
+          f.strand = f.strand === -1 ? 1 : -1;
+        }
+        for (const p of state.primers) {
+          const start = length - p.end;
+          const end = length - p.start;
+          p.start = start;
+          p.end = end;
+        }
+        revision += 1;
+        history.push({ op, payload: clone(payload), revision });
+        return buildResponse(req, AckStatus.ACCEPTED);
+      }
       case OperationKind.SET_CIRCULAR: {
         if (typeof payload.circular !== "boolean") {
           return buildResponse(req, AckStatus.REJECTED, {
@@ -279,7 +306,12 @@ export function createMockAuthority(options) {
         return buildResponse(req, AckStatus.ACCEPTED);
       }
       case OperationKind.ROTATE_ORIGIN: {
-        const { origin } = payload;
+        // Accept both the synthetic `origin` and the explicit `new_origin`
+        // (0-based) wire shapes.
+        const origin =
+          typeof payload.new_origin === "number"
+            ? payload.new_origin
+            : payload.origin;
         if (typeof origin !== "number" || origin < 0) {
           return buildResponse(req, AckStatus.REJECTED, {
             message: `rotate_origin requires non-negative origin`

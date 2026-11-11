@@ -51,6 +51,7 @@ const SYNTHETIC_MUTATING_ACTIONS = new Set([
 // the annotation object; `UPDATE_CIRCULAR` carries the boolean topology.
 const REAL_MUTATING_ACTIONS = new Set([
   "SEQUENCE_DATA_UPDATE",
+  "SET_ORIGIN",
   "UPSERT_FEATURE",
   "DELETE_FEATURE",
   "UPSERT_PRIMER",
@@ -228,32 +229,40 @@ function buildRealRequest(action, canonicalSequence) {
             "DELETE_PRIMER"
         };
       }
-      // Reason: a reverse complement or an origin rotation changes residues
-      // *and* annotation coordinates/strands at once. The wire protocol has no
-      // operation that carries both, and a plain `replace_bases` would leave
-      // feature strands and coordinates wrong. Reject explicitly and
-      // rebroadcast the canonical state instead of silently corrupting the
-      // annotations; the Qt Edit ▸ Reverse Complement / Set Origin commands
-      // remain the canonical path for those transforms.
+      // Reason: a whole-molecule reverse complement is unambiguous from the
+      // canonical sequence, so route it to the dedicated operation. The
+      // editing seam flips feature/marker coordinates and strands; a plain
+      // `replace_bases` would leave them wrong.
       if (reverseComplement(canonicalSequence) === newSequence) {
-        return {
-          error:
-            "SEQUENCE_DATA_UPDATE is a reverse complement; use the canonical " +
-            "Edit ▸ Reverse Complement command so feature strands and " +
-            "coordinates are remapped by the editing seam"
-        };
+        return { operation: "reverse_complement", payload: {} };
       }
+      // Reason: an origin rotation is ambiguous on repeated residues, so the
+      // OVE command dispatches an explicit `SET_ORIGIN` action first and the
+      // middleware swallows the follow-up full snapshot. A bare rotation that
+      // reaches here is an unclassified simultaneous change; reject it rather
+      // than guess the origin.
       if (isRotation(canonicalSequence, newSequence)) {
         return {
           error:
-            "SEQUENCE_DATA_UPDATE is an origin rotation; use the canonical " +
-            "Set Origin command so feature coordinates are remapped"
+            "SEQUENCE_DATA_UPDATE is an origin rotation without an explicit " +
+            "SET_ORIGIN action; the origin cannot be inferred safely on " +
+            "repeated residues"
         };
       }
       return {
         operation: "replace_bases",
         payload: diffResidues(canonicalSequence, newSequence)
       };
+    }
+    case "SET_ORIGIN": {
+      const newOrigin =
+        payload && typeof payload.new_origin === "number"
+          ? payload.new_origin
+          : null;
+      if (newOrigin === null) {
+        return { error: "SET_ORIGIN without a numeric new_origin" };
+      }
+      return { operation: "rotate_origin", payload: { new_origin: newOrigin } };
     }
     case "UPSERT_FEATURE":
       return { operation: "upsert_feature", payload: { feature: payload } };
@@ -342,6 +351,14 @@ export function createExternalAuthorityMiddleware(options) {
     typeof options.getCanonicalSnapshot === "function"
       ? options.getCanonicalSnapshot
       : () => null;
+  // Reason: the OVE Set Origin command dispatches an explicit `SET_ORIGIN`
+  // action and then the local `SEQUENCE_DATA_UPDATE` that rotates the
+  // sequence. The explicit action is authoritative; the follow-up full
+  // snapshot is the same rotation and must not be submitted a second time (or
+  // rejected as an unclassified rotation). The flag is consumed by the next
+  // `SEQUENCE_DATA_UPDATE` and cleared on a microtask so a command that never
+  // emits one cannot swallow an unrelated later edit.
+  let suppressNextSequenceDataUpdate = false;
 
   function buildRequest(operation, payload) {
     return {
@@ -383,12 +400,30 @@ export function createExternalAuthorityMiddleware(options) {
   return function externalAuthorityMiddleware(/* store */) {
     return function (next) {
       return async function (action) {
+        if (
+          action.type === "SEQUENCE_DATA_UPDATE" &&
+          suppressNextSequenceDataUpdate
+        ) {
+          // The explicit SET_ORIGIN already submitted the rotation and the
+          // canonical snapshot is applied; this local full snapshot is the
+          // same change and must not be routed again.
+          suppressNextSequenceDataUpdate = false;
+          return undefined;
+        }
         const isSynthetic = SYNTHETIC_MUTATING_ACTIONS.has(action.type);
         const isReal = REAL_MUTATING_ACTIONS.has(action.type);
         const isUndoRedo =
           action.type === "VE_UNDO" || action.type === "VE_REDO";
         if (!isSynthetic && !isReal && !isUndoRedo) {
           return next(action);
+        }
+        if (action.type === "SET_ORIGIN") {
+          suppressNextSequenceDataUpdate = true;
+          // Clear on a microtask so a command that never emits the follow-up
+          // snapshot cannot swallow an unrelated later edit.
+          Promise.resolve().then(() => {
+            suppressNextSequenceDataUpdate = false;
+          });
         }
 
         let operation;

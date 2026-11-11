@@ -184,6 +184,80 @@ function isRotation(oldSequence, newSequence) {
   return (newSequence + newSequence).includes(oldSequence);
 }
 
+/**
+ * Apply an explicit wire mutation to a sequence, or return null when the
+ * operation is not one of the residue operations.
+ */
+function applyMutation(sequence, mutation) {
+  const payload = (mutation && mutation.payload) || {};
+  switch (mutation && mutation.operation) {
+    case "delete_bases":
+      return sequence.slice(0, payload.start) + sequence.slice(payload.end);
+    case "insert_bases":
+      return (
+        sequence.slice(0, payload.position) +
+        String(payload.residues || "") +
+        sequence.slice(payload.position)
+      );
+    case "replace_bases":
+      return (
+        sequence.slice(0, payload.start) +
+        String(payload.replacement || "") +
+        sequence.slice(payload.end)
+      );
+    default:
+      return null;
+  }
+}
+
+/**
+ * Return true when the prefix/suffix diff identifies a unique edit location.
+ *
+ * The diff is the rightmost representation of the change. On repeated bases
+ * the same result can be produced by shifting the edit left, so the diff
+ * cannot be trusted to place feature coordinates. The boundary checks below
+ * reject exactly those ambiguous cases; the gesture call sites carry explicit
+ * metadata for the edits that matter.
+ */
+function isUnambiguousMutation(oldSequence, newSequence, mutation) {
+  const { start, end, replacement } = mutation;
+  const oldLength = oldSequence.length;
+  if (replacement === "") {
+    // Pure deletion: ambiguous when the deleted base equals the base before
+    // the deletion (the edit can slide left).
+    if (start > 0 && oldSequence[start - 1] === oldSequence[end - 1]) {
+      return false;
+    }
+    return true;
+  }
+  if (start === end) {
+    // Pure insertion: ambiguous when the inserted base equals the base before
+    // or after the insertion (the edit can slide).
+    if (
+      start > 0 &&
+      oldSequence[start - 1] === replacement[replacement.length - 1]
+    ) {
+      return false;
+    }
+    if (start < oldLength && oldSequence[start] === replacement[0]) {
+      return false;
+    }
+    return true;
+  }
+  // Replacement: ambiguous when the replacement can slide across either
+  // boundary.
+  if (
+    start > 0 &&
+    oldSequence[start - 1] === replacement[replacement.length - 1]
+  ) {
+    return false;
+  }
+  if (end < oldLength && oldSequence[end] === replacement[0]) {
+    return false;
+  }
+  return true;
+}
+
 function normalizeId(payload) {
   if (typeof payload === "string") return payload;
   if (
@@ -221,6 +295,41 @@ function buildRealRequest(action, canonicalSequence) {
       if (typeof canonicalSequence !== "string") {
         return { error: "no canonical sequence available to diff" };
       }
+      // Prefer the explicit mutation the gesture call site attached. It is
+      // the only way to place the edit exactly on repeated bases, and it is
+      // validated against the actual sequence change so a stale or wrong
+      // annotation cannot be trusted.
+      const explicit = action.meta && action.meta.openGeneMutation;
+      if (explicit) {
+        if (explicit.compound) {
+          return {
+            error:
+              explicit.reason ||
+              "compound SEQUENCE_DATA_UPDATE with annotation deltas is not supported"
+          };
+        }
+        if (explicit.wraps) {
+          return {
+            error:
+              "wrapping delete_bases across the origin is not supported by " +
+              "the wire protocol"
+          };
+        }
+        const applied = applyMutation(canonicalSequence, explicit);
+        if (applied === null) {
+          return {
+            error: `unsupported explicit operation ${explicit.operation}`
+          };
+        }
+        if (applied !== newSequence) {
+          return {
+            error:
+              "explicit mutation does not match the local sequence change; " +
+              "refusing to apply a divergent edit"
+          };
+        }
+        return { operation: explicit.operation, payload: explicit.payload };
+      }
       if (newSequence === canonicalSequence) {
         return {
           error:
@@ -249,10 +358,15 @@ function buildRealRequest(action, canonicalSequence) {
             "repeated residues"
         };
       }
-      return {
-        operation: "replace_bases",
-        payload: diffResidues(canonicalSequence, newSequence)
-      };
+      const mutation = diffResidues(canonicalSequence, newSequence);
+      if (!isUnambiguousMutation(canonicalSequence, newSequence, mutation)) {
+        return {
+          error:
+            "unannotated SEQUENCE_DATA_UPDATE is ambiguous on repeated bases; " +
+            "the gesture must carry explicit openGeneMutation metadata"
+        };
+      }
+      return { operation: "replace_bases", payload: mutation };
     }
     case "SET_ORIGIN": {
       const newOrigin =

@@ -239,7 +239,13 @@ describe("makeStore — external-authority middleware wiring (slice 1a integrati
     store.dispatch({
       type: "SEQUENCE_DATA_UPDATE",
       payload: { sequence: "ACGT", circular: true },
-      meta: { editorName: "testEditor" }
+      meta: {
+        editorName: "testEditor",
+        openGeneMutation: {
+          operation: "delete_bases",
+          payload: { start: 4, end: 8 }
+        }
+      }
     });
     await new Promise(r => setTimeout(r, 0));
 

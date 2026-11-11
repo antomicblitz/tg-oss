@@ -527,7 +527,17 @@ export default compose(
           maintainOriginSplit: true
         }
       );
-      updateSequenceData(newSeqData);
+      // Reason: a selection-level reverse complement flips the residues and
+      // the annotation strands inside the range. The wire protocol has no
+      // operation that carries both, so mark it compound and let the
+      // authority reject it explicitly instead of applying a plain
+      // replace_bases that would leave the strands wrong.
+      updateSequenceData(newSeqData, {
+        openGeneMutation: {
+          compound: true,
+          reason: "partial reverse complement with annotation deltas"
+        }
+      });
     },
 
     handleComplementSelection: props => async () => {
@@ -551,7 +561,15 @@ export default compose(
           maintainOriginSplit: true
         }
       );
-      updateSequenceData(newSeqData);
+      // Reason: a selection-level complement changes residues and annotation
+      // strands together; reject it explicitly until the protocol can carry
+      // both atomically.
+      updateSequenceData(newSeqData, {
+        openGeneMutation: {
+          compound: true,
+          reason: "partial complement with annotation deltas"
+        }
+      });
     },
 
     handleReverseComplementSequence: props => () => {

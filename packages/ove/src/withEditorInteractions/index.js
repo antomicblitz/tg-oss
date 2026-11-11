@@ -286,7 +286,7 @@ function VectorInteractionHOC(Component /* options */) {
         copyOptions,
         disableBpEditing,
         readOnly,
-        getAcceptedInsertChars,
+        getAcceptedInsertChars
       } = this.props;
       const onCut = this.props.onCut || this.props.onCopy || noop;
       const seqData = tidyUpSequenceData(
@@ -491,7 +491,27 @@ function VectorInteractionHOC(Component /* options */) {
             rangeToDelete
           );
         if (abortSeqChange) return;
-        updateSequenceData(newSeqData);
+        // Reason: the prefix/suffix diff cannot recover the exact edit
+        // location on repeated bases (deleting index 1 of "AAAAA" and index 4
+        // both yield "AAAA"). The gesture knows the inclusive range, so carry
+        // the exact half-open delete range to the external authority. A
+        // wrapping range (circular selection across the origin) is marked so
+        // the authority can reject it explicitly instead of guessing.
+        const deleteStart = rangeToDelete.start;
+        const deleteEnd = rangeToDelete.end + 1;
+        const wraps = rangeToDelete.start > rangeToDelete.end;
+        const openGeneMutation =
+          deleteStart >= 0
+            ? {
+                operation: "delete_bases",
+                payload: { start: deleteStart, end: deleteEnd },
+                ...(wraps ? { wraps: true } : {})
+              }
+            : undefined;
+        updateSequenceData(
+          newSeqData,
+          openGeneMutation ? { openGeneMutation } : undefined
+        );
         caretPositionUpdate(
           isCaretAtEndOfSeq
             ? newSeqData.sequence.length
@@ -1317,7 +1337,42 @@ const insertAndSelectHelper = async ({ seqDataToInsert, props }) => {
       throw new Error("bpLimit exceeded");
     }
   }
-  updateSequenceData(newSeqData);
+  // Reason: the gesture knows the exact caret/selection and the inserted
+  // residues, so carry the precise mutation instead of letting the authority
+  // infer it from a repeated-base-ambiguous full snapshot. A fragment that
+  // also carries annotations is a compound update the wire protocol cannot
+  // apply atomically; mark it so the authority rejects it explicitly rather
+  // than silently dropping the annotations.
+  const insertedResidues = seqDataToInsert.sequence || "";
+  const hasAnnotations =
+    (Array.isArray(seqDataToInsert.features) &&
+      seqDataToInsert.features.length > 0) ||
+    (Array.isArray(seqDataToInsert.primers) &&
+      seqDataToInsert.primers.length > 0);
+  let openGeneMutation;
+  if (caretPosition > -1) {
+    openGeneMutation = {
+      operation: "insert_bases",
+      payload: { position: caretPosition, residues: insertedResidues }
+    };
+  } else if (selectionLayer && selectionLayer.start >= 0) {
+    openGeneMutation = {
+      operation: "replace_bases",
+      payload: {
+        start: selectionLayer.start,
+        end: selectionLayer.end + 1,
+        replacement: insertedResidues
+      }
+    };
+  }
+  if (openGeneMutation && hasAnnotations) {
+    openGeneMutation.compound = true;
+    openGeneMutation.reason = "fragment insert with annotation deltas";
+  }
+  updateSequenceData(
+    newSeqData,
+    openGeneMutation ? { openGeneMutation } : undefined
+  );
   const seqDataInsertLength = seqDataToInsert.sequence
     ? seqDataToInsert.sequence.length
     : null;

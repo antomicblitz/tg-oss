@@ -415,10 +415,79 @@ describe("real OVE action routing", () => {
     return { mw, applied };
   }
 
-  it("routes SEQUENCE_DATA_UPDATE as replace_bases and applies the canonical snapshot", async () => {
+  it("routes an explicit delete_bases SEQUENCE_DATA_UPDATE and applies the canonical snapshot", async () => {
     const authority = createMockAuthority({
       documentId: "doc-1",
       initial: { sequence: "ACGTACGT", circular: true }
+    });
+    const operations = [];
+    const { mw, applied } = makeRealActionMiddleware(authority, {
+      submit: async request => {
+        operations.push(request);
+        return authority.submit(request);
+      }
+    });
+    const { next, seen } = recordingNext();
+
+    await mw(next)({
+      type: "SEQUENCE_DATA_UPDATE",
+      meta: {
+        editorName: "main",
+        openGeneMutation: {
+          operation: "delete_bases",
+          payload: { start: 4, end: 8 }
+        }
+      },
+      payload: { sequence: "ACGT", circular: true }
+    });
+
+    // The local full snapshot is NOT forwarded; the canonical one is applied.
+    expect(seen.length).toBe(0);
+    expect(operations[0].operation).toBe("delete_bases");
+    expect(operations[0].payload).toEqual({ start: 4, end: 8 });
+    expect(authority.revision()).toBe(1);
+    expect(authority.snapshot().sequence).toBe("ACGT");
+    expect(applied.length).toBe(1);
+    expect(applied[0].sequence).toBe("ACGT");
+  });
+
+  it("uses the explicit delete range on repeated bases instead of the diff heuristic", async () => {
+    // Deleting index 1 of AAAAA and index 4 both yield AAAA. The gesture
+    // metadata must win so feature coordinates are remapped at the real edit.
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "AAAAA", circular: false }
+    });
+    const operations = [];
+    const { mw } = makeRealActionMiddleware(authority, {
+      submit: async request => {
+        operations.push(request);
+        return authority.submit(request);
+      }
+    });
+    const { next } = recordingNext();
+
+    await mw(next)({
+      type: "SEQUENCE_DATA_UPDATE",
+      meta: {
+        editorName: "main",
+        openGeneMutation: {
+          operation: "delete_bases",
+          payload: { start: 1, end: 2 }
+        }
+      },
+      payload: { sequence: "AAAA" }
+    });
+
+    expect(operations[0].operation).toBe("delete_bases");
+    expect(operations[0].payload).toEqual({ start: 1, end: 2 });
+    expect(authority.snapshot().sequence).toBe("AAAA");
+  });
+
+  it("rejects an unannotated repeated-base deletion instead of guessing the index", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "AAAAA", circular: false }
     });
     const { mw, applied } = makeRealActionMiddleware(authority);
     const { next, seen } = recordingNext();
@@ -426,13 +495,71 @@ describe("real OVE action routing", () => {
     await mw(next)({
       type: "SEQUENCE_DATA_UPDATE",
       meta: { editorName: "main" },
-      payload: { sequence: "ACGT", circular: true }
+      payload: { sequence: "AAAA" }
     });
 
-    // The local full snapshot is NOT forwarded; the canonical one is applied.
-    expect(seen.length).toBe(0);
-    expect(authority.revision()).toBe(1);
-    expect(authority.snapshot().sequence).toBe("ACGT");
+    expect(seen.length).toBe(1);
+    expect(seen[0].type).toBe("SEQUENCE_DATA_UPDATE_REJECTED");
+    expect(seen[0].payload.message).toMatch(/ambiguous on repeated bases/);
+    expect(authority.revision()).toBe(0);
+    expect(applied.length).toBe(1);
+    expect(applied[0].sequence).toBe("AAAAA");
+  });
+
+  it("rejects explicit metadata that does not match the local sequence change", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "AAAAA", circular: false }
+    });
+    const { mw, applied } = makeRealActionMiddleware(authority);
+    const { next, seen } = recordingNext();
+
+    await mw(next)({
+      type: "SEQUENCE_DATA_UPDATE",
+      meta: {
+        editorName: "main",
+        openGeneMutation: {
+          operation: "delete_bases",
+          payload: { start: 0, end: 2 }
+        }
+      },
+      payload: { sequence: "AAAA" }
+    });
+
+    expect(seen.length).toBe(1);
+    expect(seen[0].type).toBe("SEQUENCE_DATA_UPDATE_REJECTED");
+    expect(seen[0].payload.message).toMatch(/does not match/);
+    expect(authority.revision()).toBe(0);
+    expect(applied.length).toBe(1);
+    expect(applied[0].sequence).toBe("AAAAA");
+  });
+
+  it("rejects a compound fragment insert with annotation deltas", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGT", circular: false }
+    });
+    const { mw, applied } = makeRealActionMiddleware(authority);
+    const { next, seen } = recordingNext();
+
+    await mw(next)({
+      type: "SEQUENCE_DATA_UPDATE",
+      meta: {
+        editorName: "main",
+        openGeneMutation: {
+          operation: "insert_bases",
+          payload: { position: 2, residues: "TT" },
+          compound: true,
+          reason: "fragment insert with annotation deltas"
+        }
+      },
+      payload: { sequence: "ACTTGT" }
+    });
+
+    expect(seen.length).toBe(1);
+    expect(seen[0].type).toBe("SEQUENCE_DATA_UPDATE_REJECTED");
+    expect(seen[0].payload.message).toMatch(/fragment insert/);
+    expect(authority.revision()).toBe(0);
     expect(applied.length).toBe(1);
     expect(applied[0].sequence).toBe("ACGT");
   });

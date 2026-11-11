@@ -717,6 +717,48 @@ describe("real OVE action routing", () => {
     expect(authority.snapshot().features).toHaveLength(0);
   });
 
+  it("forwards fragment annotations in the explicit insert transaction", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGT", circular: true }
+    });
+    const operations = [];
+    const { mw } = makeRealActionMiddleware(authority, {
+      submit: async request => {
+        operations.push(request);
+        return authority.submit(request);
+      }
+    });
+    const { next } = recordingNext();
+
+    await mw(next)({
+      type: "SEQUENCE_DATA_UPDATE",
+      meta: {
+        editorName: "main",
+        openGeneMutation: {
+          operation: "insert_bases",
+          payload: { position: 2, residues: "TT" },
+          features: [
+            { id: "f-new", name: "inserted", start: 0, end: 1, strand: 1 }
+          ],
+          primers: [{ id: "p-new", name: "new primer", sequence: "TT" }]
+        }
+      },
+      payload: { sequence: "ACTTGT", circular: true }
+    });
+
+    expect(operations).toHaveLength(1);
+    expect(operations[0].operation).toBe("insert_bases");
+    expect(operations[0].payload).toEqual({
+      position: 2,
+      residues: "TT",
+      features: [
+        { id: "f-new", name: "inserted", start: 0, end: 1, strand: 1 }
+      ],
+      primers: [{ id: "p-new", name: "new primer", sequence: "TT" }]
+    });
+  });
+
   it("routes a multi-id DELETE_FEATURE as one transaction", async () => {
     const authority = createMockAuthority({
       documentId: "doc-1",

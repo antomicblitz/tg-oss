@@ -340,7 +340,19 @@ function buildRealRequest(action, canonicalSequence) {
               "refusing to apply a divergent edit"
           };
         }
-        return { operation: explicit.operation, payload: explicit.payload };
+        // Reason: an annotated fragment/paste carries only the inserted
+        // fragment's annotations (fragment-relative). Forward them in the same
+        // transaction so Python applies the residue edit and the annotation
+        // deltas atomically; the accepted canonical snapshot then replaces the
+        // local full snapshot.
+        const requestPayload = { ...explicit.payload };
+        if (Array.isArray(explicit.features)) {
+          requestPayload.features = explicit.features;
+        }
+        if (Array.isArray(explicit.primers)) {
+          requestPayload.primers = explicit.primers;
+        }
+        return { operation: explicit.operation, payload: requestPayload };
       }
       if (newSequence === canonicalSequence) {
         return {

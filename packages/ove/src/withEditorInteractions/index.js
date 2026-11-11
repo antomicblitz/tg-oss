@@ -1366,8 +1366,15 @@ const insertAndSelectHelper = async ({ seqDataToInsert, props }) => {
     };
   }
   if (openGeneMutation && hasAnnotations) {
-    openGeneMutation.compound = true;
-    openGeneMutation.reason = "fragment insert with annotation deltas";
+    // Reason: the fragment's annotations are fragment-relative. Forward only
+    // those deltas (not the full already-remapped molecule) so Python applies
+    // the residue edit and the inserted annotations in one transaction.
+    openGeneMutation.features = Array.isArray(seqDataToInsert.features)
+      ? seqDataToInsert.features
+      : [];
+    openGeneMutation.primers = Array.isArray(seqDataToInsert.primers)
+      ? seqDataToInsert.primers
+      : [];
   }
   updateSequenceData(
     newSeqData,

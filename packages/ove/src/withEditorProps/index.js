@@ -214,6 +214,15 @@ export const handleInverse = props => () => {
   }
 };
 
+function isExternalAuthorityConfigured() {
+  return Boolean(
+    typeof window !== "undefined" &&
+      window.__OVE_EXTERNAL_AUTHORITY__ &&
+      typeof window.__OVE_EXTERNAL_AUTHORITY__.isConfigured === "function" &&
+      window.__OVE_EXTERNAL_AUTHORITY__.isConfigured()
+  );
+}
+
 export const updateCircular = props => async isCircular => {
   const { _updateCircular, updateSequenceData, sequenceData } = props;
   if (!isCircular && hasAnnotationThatSpansOrigin(sequenceData)) {
@@ -224,7 +233,23 @@ export const updateCircular = props => async isCircular => {
       text: "Careful! Origin spanning annotations will be truncated. Are you sure you want to make the sequence linear?"
     });
     if (!doAction) return; //stop early
-    updateSequenceData(truncateOriginSpanningAnnotations(sequenceData), {
+    const truncated = truncateOriginSpanningAnnotations(sequenceData);
+    if (isExternalAuthorityConfigured()) {
+      // Reason: the authority owns the canonical document. Send the topology
+      // change and the user's confirmed annotation truncation as one explicit
+      // operation so they apply atomically (one undo command). Dispatching the
+      // annotation-only snapshot first would be rejected and the topology
+      // toggle would restore the untruncated annotations.
+      _updateCircular(isCircular, {
+        batchUndoEnd: true,
+        openGeneTruncation: {
+          features: truncated.features,
+          primers: truncated.primers
+        }
+      });
+      return;
+    }
+    updateSequenceData(truncated, {
       batchUndoStart: true
     });
   }
@@ -370,8 +395,12 @@ export default compose(
           options
         } = props.beforeSequenceInsertOrDelete
           ? (await props.beforeSequenceInsertOrDelete(
-              tidyUpSequenceData(_sequenceDataToInsert, { getAcceptedInsertChars: props.getAcceptedInsertChars }),
-              tidyUpSequenceData(_existingSequenceData, { getAcceptedInsertChars: props.getAcceptedInsertChars }),
+              tidyUpSequenceData(_sequenceDataToInsert, {
+                getAcceptedInsertChars: props.getAcceptedInsertChars
+              }),
+              tidyUpSequenceData(_existingSequenceData, {
+                getAcceptedInsertChars: props.getAcceptedInsertChars
+              }),
               _caretPositionOrRange,
               _options
             )) || {}
@@ -474,12 +503,25 @@ export default compose(
         readOnly,
         sequenceData,
         updateSequenceData,
-        caretPositionUpdate
+        caretPositionUpdate,
+        dispatch
       } = props;
       if (readOnly) {
         return;
       }
       if (caretPosition < 0) return;
+      // Reason: a rotated full snapshot is ambiguous on repeated residues, so
+      // the external authority cannot infer the origin safely. Dispatch an
+      // explicit action carrying the origin; the authority routes it to the
+      // canonical `rotate_origin` operation and swallows the follow-up
+      // `SEQUENCE_DATA_UPDATE`. Standalone OVE ignores the unknown action and
+      // applies the local rotation below as before.
+      if (dispatch) {
+        dispatch({
+          type: "SET_ORIGIN",
+          payload: { new_origin: caretPosition }
+        });
+      }
       updateSequenceData(
         rotateSequenceDataToPosition(sequenceData, caretPosition)
       );
@@ -510,7 +552,17 @@ export default compose(
           maintainOriginSplit: true
         }
       );
-      updateSequenceData(newSeqData);
+      // Reason: a selection-level reverse complement flips the residues and
+      // the annotation strands inside the range. The wire protocol has no
+      // operation that carries both, so mark it compound and let the
+      // authority reject it explicitly instead of applying a plain
+      // replace_bases that would leave the strands wrong.
+      updateSequenceData(newSeqData, {
+        openGeneMutation: {
+          compound: true,
+          reason: "partial reverse complement with annotation deltas"
+        }
+      });
     },
 
     handleComplementSelection: props => async () => {
@@ -534,7 +586,15 @@ export default compose(
           maintainOriginSplit: true
         }
       );
-      updateSequenceData(newSeqData);
+      // Reason: a selection-level complement changes residues and annotation
+      // strands together; reject it explicitly until the protocol can carry
+      // both atomically.
+      updateSequenceData(newSeqData, {
+        openGeneMutation: {
+          compound: true,
+          reason: "partial complement with annotation deltas"
+        }
+      });
     },
 
     handleReverseComplementSequence: props => () => {
@@ -559,10 +619,11 @@ const getEditorState = createSelector(
   (state, editorName) => editorName,
   (VectorEditor, editorName) => {
     const editorState = VectorEditor[editorName];
-    editorState && (editorState.editorSize =  Object.values(VectorEditor).filter(
-    editorItem => editorItem?.sequenceData
-  ).length);
-  return editorState;
+    editorState &&
+      (editorState.editorSize = Object.values(VectorEditor).filter(
+        editorItem => editorItem?.sequenceData
+      ).length);
+    return editorState;
   }
 );
 
@@ -634,7 +695,7 @@ function mapStateToProps(state, ownProps) {
   const selectedCutsites = s.selectedCutsitesSelector(editorState);
   const allCutsites = s.cutsitesSelector(
     editorState,
-    ownProps.additionalEnzymes,
+    ownProps.additionalEnzymes
   );
 
   const { matchedSearchLayer, searchLayers, matchesTotal } =
@@ -899,7 +960,7 @@ export function getShowGCContent(state, ownProps) {
 }
 
 function jsonToJson(incomingJson, options) {
-  const {getAcceptedInsertChars} = options || {};
+  const { getAcceptedInsertChars } = options || {};
   return JSON.stringify(
     omit(
       cleanUpTeselagenJsonForExport(

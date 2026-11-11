@@ -198,6 +198,112 @@ describe("makeStore — external-authority middleware wiring (slice 1a integrati
     }).not.toThrow();
   });
 
+  it("routes a real SEQUENCE_DATA_UPDATE through the authority and keeps the local undo stack empty", async () => {
+    const makeStore = await loadMakeStore();
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGTACGT", circular: true }
+    });
+    let storeRef = null;
+    install({
+      documentId: "doc-1",
+      surfaceId: "surface-1",
+      revision: () => authority.revision(),
+      getCanonicalSequence: () => authority.snapshot().sequence,
+      getCanonicalSnapshot: () => authority.snapshot(),
+      submit: async request => authority.submit(request),
+      applySnapshot: canonical => {
+        storeRef.dispatch({
+          type: "VECTOR_EDITOR_UPDATE",
+          payload: { sequenceData: canonical },
+          meta: {
+            editorName: "testEditor",
+            disregardUndo: true,
+            mergeStateDeep: true
+          }
+        });
+      }
+    });
+    const store = makeStore();
+    storeRef = store;
+    store.dispatch({
+      type: "VECTOR_EDITOR_UPDATE",
+      payload: { sequenceData: { sequence: "ACGTACGT", circular: true } },
+      meta: {
+        editorName: "testEditor",
+        disregardUndo: true,
+        mergeStateDeep: true
+      }
+    });
+
+    store.dispatch({
+      type: "SEQUENCE_DATA_UPDATE",
+      payload: { sequence: "ACGT", circular: true },
+      meta: {
+        editorName: "testEditor",
+        openGeneMutation: {
+          operation: "delete_bases",
+          payload: { start: 4, end: 8 }
+        }
+      }
+    });
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(authority.revision()).toBe(1);
+    expect(authority.snapshot().sequence).toBe("ACGT");
+    const editorState = store.getState().VectorEditor.testEditor;
+    expect(editorState.sequenceData.sequence).toBe("ACGT");
+    // The authority owns undo; the local vectorEditorMiddleware must not
+    // have recorded the mutation.
+    expect(editorState.sequenceDataHistory.past).toHaveLength(0);
+  });
+
+  it("swallows VE_UNDO before the local undo middleware can pop its stack", async () => {
+    const makeStore = await loadMakeStore();
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGT", circular: false }
+    });
+    let storeRef = null;
+    install({
+      documentId: "doc-1",
+      surfaceId: "surface-1",
+      revision: () => authority.revision(),
+      getCanonicalSequence: () => authority.snapshot().sequence,
+      getCanonicalSnapshot: () => authority.snapshot(),
+      submit: async request => authority.submit(request),
+      applySnapshot: canonical => {
+        storeRef.dispatch({
+          type: "VECTOR_EDITOR_UPDATE",
+          payload: { sequenceData: canonical },
+          meta: {
+            editorName: "testEditor",
+            disregardUndo: true,
+            mergeStateDeep: true
+          }
+        });
+      }
+    });
+    const store = makeStore();
+    storeRef = store;
+    store.dispatch({
+      type: "VECTOR_EDITOR_UPDATE",
+      payload: { sequenceData: { sequence: "ACGT", circular: false } },
+      meta: {
+        editorName: "testEditor",
+        disregardUndo: true,
+        mergeStateDeep: true
+      }
+    });
+
+    store.dispatch({ type: "VE_UNDO", meta: { editorName: "testEditor" } });
+    await new Promise(r => setTimeout(r, 0));
+
+    const editorState = store.getState().VectorEditor.testEditor;
+    expect(editorState.sequenceDataHistory.past).toHaveLength(0);
+    expect(editorState.sequenceDataHistory.future).toHaveLength(0);
+  });
+
   it("reads the install namespace lazily on every makeStore() call", async () => {
     // The previous module-eval capture of
     // ``window.__OVE_EXTERNAL_AUTHORITY__`` broke refactors that

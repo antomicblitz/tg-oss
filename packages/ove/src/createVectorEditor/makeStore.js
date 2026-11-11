@@ -44,7 +44,15 @@ const makeStore = () => {
   // next store creation. This keeps the host-page lifecycle simple:
   // it can install the authority AFTER the page is rendered and
   // before any subsequent ``createVectorEditor`` call.
-  const middlewares = [thunk, vectorEditorMiddleware];
+  // Reason: the external authority must sit *before* the local undo
+  // middleware. `vectorEditorMiddleware` applies VE_UNDO / VE_REDO from its
+  // own stack and records ADD_TO_UNDO_STACK after every sequenceData change.
+  // When Python owns the canonical document and the only undo stack, the
+  // authority has to intercept the mutation first: it submits the request,
+  // applies the canonical snapshot, and swallows VE_UNDO / VE_REDO so the
+  // local stack never becomes a second undo authority. Standalone OVE (no
+  // install) keeps the original `[thunk, vectorEditorMiddleware]` chain.
+  const middlewares = [thunk];
   if (
     externalAuthority &&
     typeof externalAuthority.createMiddleware === "function"
@@ -72,6 +80,7 @@ const makeStore = () => {
       );
     }
   }
+  middlewares.push(vectorEditorMiddleware);
 
   const store = createStore(
     combineReducers({

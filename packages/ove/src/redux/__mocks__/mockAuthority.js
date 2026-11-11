@@ -20,6 +20,7 @@ export const OperationKind = Object.freeze({
   REPLACE_BASES: "replace_bases",
   INSERT_BASES: "insert_bases",
   DELETE_BASES: "delete_bases",
+  REVERSE_COMPLEMENT: "reverse_complement",
   SELECTION_UPDATE: "selection_update",
   CARET_UPDATE: "caret_update",
   UPSERT_FEATURE: "upsert_feature",
@@ -41,11 +42,29 @@ export const AckStatus = Object.freeze({
 });
 
 const PROTOCOL_VERSION = 1;
-const VALID_RESIDUES = new Set(["A", "C", "G", "T", "U", "N"]);
+const VALID_RESIDUES = new Set([
+  "A",
+  "C",
+  "G",
+  "T",
+  "U",
+  "N",
+  "R",
+  "Y",
+  "S",
+  "W",
+  "K",
+  "M",
+  "B",
+  "D",
+  "H",
+  "V"
+]);
 const MUTATING_OPS = new Set([
   OperationKind.REPLACE_BASES,
   OperationKind.INSERT_BASES,
   OperationKind.DELETE_BASES,
+  OperationKind.REVERSE_COMPLEMENT,
   OperationKind.UPSERT_FEATURE,
   OperationKind.DELETE_FEATURE,
   OperationKind.UPSERT_PRIMER,
@@ -53,6 +72,25 @@ const MUTATING_OPS = new Set([
   OperationKind.SET_CIRCULAR,
   OperationKind.ROTATE_ORIGIN
 ]);
+
+const IUPAC_COMPLEMENT = Object.freeze({
+  A: "T",
+  T: "A",
+  C: "G",
+  G: "C",
+  U: "A",
+  N: "N",
+  R: "Y",
+  Y: "R",
+  S: "S",
+  W: "W",
+  K: "M",
+  M: "K",
+  B: "V",
+  V: "B",
+  D: "H",
+  H: "D"
+});
 
 let _txnCounter = 0;
 function nextTransactionId() {
@@ -195,7 +233,11 @@ export function createMockAuthority(options) {
         });
       }
       case OperationKind.INSERT_BASES: {
-        const { position, sequence } = payload;
+        const { position } = payload;
+        // Python's wire schema uses `residues`. Keep accepting the older
+        // `sequence` field so historical mock fixtures still round-trip.
+        const residues =
+          payload.residues !== undefined ? payload.residues : payload.sequence;
         if (
           typeof position !== "number" ||
           position < 0 ||
@@ -205,12 +247,12 @@ export function createMockAuthority(options) {
             message: `insert_bases position out of bounds: ${position}`
           });
         }
-        if (!isValidResidues(sequence || "")) {
+        if (!isValidResidues(residues || "")) {
           return buildResponse(req, AckStatus.REJECTED, {
-            message: `insert_bases invalid residue in ${JSON.stringify(sequence)}`
+            message: `insert_bases invalid residue in ${JSON.stringify(residues)}`
           });
         }
-        const insert = String(sequence).toUpperCase();
+        const insert = String(residues || "").toUpperCase();
         state.sequence =
           state.sequence.slice(0, position) +
           insert +
@@ -267,6 +309,30 @@ export function createMockAuthority(options) {
           message: `deleted ${length} bp at [${start}, ${end})`
         });
       }
+      case OperationKind.REVERSE_COMPLEMENT: {
+        const length = state.sequence.length;
+        state.sequence = state.sequence
+          .split("")
+          .reverse()
+          .map(ch => IUPAC_COMPLEMENT[ch] || ch)
+          .join("");
+        for (const f of state.features) {
+          const start = length - f.end;
+          const end = length - f.start;
+          f.start = start;
+          f.end = end;
+          f.strand = f.strand === -1 ? 1 : -1;
+        }
+        for (const p of state.primers) {
+          const start = length - p.end;
+          const end = length - p.start;
+          p.start = start;
+          p.end = end;
+        }
+        revision += 1;
+        history.push({ op, payload: clone(payload), revision });
+        return buildResponse(req, AckStatus.ACCEPTED);
+      }
       case OperationKind.SET_CIRCULAR: {
         if (typeof payload.circular !== "boolean") {
           return buildResponse(req, AckStatus.REJECTED, {
@@ -274,12 +340,25 @@ export function createMockAuthority(options) {
           });
         }
         state.circular = payload.circular;
+        // Optional atomic annotation replacement (confirmed linearize
+        // truncation).
+        if (Array.isArray(payload.features)) {
+          state.features = clone(payload.features);
+        }
+        if (Array.isArray(payload.primers)) {
+          state.primers = clone(payload.primers);
+        }
         revision += 1;
         history.push({ op, payload: clone(payload), revision });
         return buildResponse(req, AckStatus.ACCEPTED);
       }
       case OperationKind.ROTATE_ORIGIN: {
-        const { origin } = payload;
+        // Accept both the synthetic `origin` and the explicit `new_origin`
+        // (0-based) wire shapes.
+        const origin =
+          typeof payload.new_origin === "number"
+            ? payload.new_origin
+            : payload.origin;
         if (typeof origin !== "number" || origin < 0) {
           return buildResponse(req, AckStatus.REJECTED, {
             message: `rotate_origin requires non-negative origin`
@@ -324,12 +403,12 @@ export function createMockAuthority(options) {
         return buildResponse(req, AckStatus.ACCEPTED);
       }
       case OperationKind.DELETE_FEATURE: {
-        const id = payload.id;
+        const ids = Array.isArray(payload.ids) ? payload.ids : [payload.id];
         const before = state.features.length;
-        state.features = state.features.filter(f => f.id !== id);
+        state.features = state.features.filter(f => !ids.includes(f.id));
         if (state.features.length === before) {
           return buildResponse(req, AckStatus.REJECTED, {
-            message: `delete_feature: id ${id} not found`
+            message: `delete_feature: ids ${JSON.stringify(ids)} not found`
           });
         }
         revision += 1;
@@ -353,12 +432,12 @@ export function createMockAuthority(options) {
         return buildResponse(req, AckStatus.ACCEPTED);
       }
       case OperationKind.DELETE_PRIMER: {
-        const id = payload.id;
+        const ids = Array.isArray(payload.ids) ? payload.ids : [payload.id];
         const before = state.primers.length;
-        state.primers = state.primers.filter(p => p.id !== id);
+        state.primers = state.primers.filter(p => !ids.includes(p.id));
         if (state.primers.length === before) {
           return buildResponse(req, AckStatus.REJECTED, {
-            message: `delete_primer: id ${id} not found`
+            message: `delete_primer: ids ${JSON.stringify(ids)} not found`
           });
         }
         revision += 1;

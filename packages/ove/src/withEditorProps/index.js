@@ -214,6 +214,15 @@ export const handleInverse = props => () => {
   }
 };
 
+function isExternalAuthorityConfigured() {
+  return Boolean(
+    typeof window !== "undefined" &&
+      window.__OVE_EXTERNAL_AUTHORITY__ &&
+      typeof window.__OVE_EXTERNAL_AUTHORITY__.isConfigured === "function" &&
+      window.__OVE_EXTERNAL_AUTHORITY__.isConfigured()
+  );
+}
+
 export const updateCircular = props => async isCircular => {
   const { _updateCircular, updateSequenceData, sequenceData } = props;
   if (!isCircular && hasAnnotationThatSpansOrigin(sequenceData)) {
@@ -224,7 +233,23 @@ export const updateCircular = props => async isCircular => {
       text: "Careful! Origin spanning annotations will be truncated. Are you sure you want to make the sequence linear?"
     });
     if (!doAction) return; //stop early
-    updateSequenceData(truncateOriginSpanningAnnotations(sequenceData), {
+    const truncated = truncateOriginSpanningAnnotations(sequenceData);
+    if (isExternalAuthorityConfigured()) {
+      // Reason: the authority owns the canonical document. Send the topology
+      // change and the user's confirmed annotation truncation as one explicit
+      // operation so they apply atomically (one undo command). Dispatching the
+      // annotation-only snapshot first would be rejected and the topology
+      // toggle would restore the untruncated annotations.
+      _updateCircular(isCircular, {
+        batchUndoEnd: true,
+        openGeneTruncation: {
+          features: truncated.features,
+          primers: truncated.primers
+        }
+      });
+      return;
+    }
+    updateSequenceData(truncated, {
       batchUndoStart: true
     });
   }

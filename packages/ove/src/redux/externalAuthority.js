@@ -258,16 +258,28 @@ function isUnambiguousMutation(oldSequence, newSequence, mutation) {
   return true;
 }
 
-function normalizeId(payload) {
-  if (typeof payload === "string") return payload;
-  if (
-    payload &&
-    typeof payload === "object" &&
-    typeof payload.id === "string"
-  ) {
-    return payload.id;
+/**
+ * Normalize an OVE delete payload to a non-empty array of ids.
+ *
+ * Stock OVE's `upsertDeleteActionGenerator` accepts a string id, an object
+ * with `id`, or an array of either. The wire protocol carries the whole set in
+ * one `delete_feature` / `delete_primer` transaction so a multi-select delete
+ * is one undo command. Returns null when any id is missing or invalid.
+ */
+function normalizeIds(payload) {
+  const raw = Array.isArray(payload) ? payload : [payload];
+  const ids = [];
+  for (const item of raw) {
+    const id =
+      typeof item === "string"
+        ? item
+        : item && typeof item === "object" && typeof item.id === "string"
+          ? item.id
+          : null;
+    if (!id) return null;
+    ids.push(id);
   }
-  return null;
+  return ids.length > 0 ? ids : null;
 }
 
 /**
@@ -381,22 +393,36 @@ function buildRealRequest(action, canonicalSequence) {
     case "UPSERT_FEATURE":
       return { operation: "upsert_feature", payload: { feature: payload } };
     case "DELETE_FEATURE": {
-      const id = normalizeId(payload);
-      if (id === null) return { error: "DELETE_FEATURE without an id" };
-      return { operation: "delete_feature", payload: { id } };
+      const ids = normalizeIds(payload);
+      if (ids === null) return { error: "DELETE_FEATURE without valid ids" };
+      return { operation: "delete_feature", payload: { ids } };
     }
     case "UPSERT_PRIMER":
       return { operation: "upsert_primer", payload: { primer: payload } };
     case "DELETE_PRIMER": {
-      const id = normalizeId(payload);
-      if (id === null) return { error: "DELETE_PRIMER without an id" };
-      return { operation: "delete_primer", payload: { id } };
+      const ids = normalizeIds(payload);
+      if (ids === null) return { error: "DELETE_PRIMER without valid ids" };
+      return { operation: "delete_primer", payload: { ids } };
     }
-    case "UPDATE_CIRCULAR":
-      return {
-        operation: "set_circular",
-        payload: { circular: Boolean(payload) }
-      };
+    case "UPDATE_CIRCULAR": {
+      // Reason: a confirmed linearize+truncate carries the user's chosen
+      // annotation replacement in the action meta. Send it in the same
+      // `set_circular` transaction so topology and annotations change
+      // atomically (one undo command) instead of a rejected annotation-only
+      // snapshot followed by a topology toggle that restores the old
+      // annotations.
+      const truncation = action.meta && action.meta.openGeneTruncation;
+      const requestPayload = { circular: Boolean(payload) };
+      if (truncation) {
+        if (Array.isArray(truncation.features)) {
+          requestPayload.features = truncation.features;
+        }
+        if (Array.isArray(truncation.primers)) {
+          requestPayload.primers = truncation.primers;
+        }
+      }
+      return { operation: "set_circular", payload: requestPayload };
+    }
     default:
       return { error: `unsupported real action ${action.type}` };
   }

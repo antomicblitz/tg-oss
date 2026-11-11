@@ -301,6 +301,14 @@ export function createMockAuthority(options) {
           });
         }
         state.circular = payload.circular;
+        // Optional atomic annotation replacement (confirmed linearize
+        // truncation).
+        if (Array.isArray(payload.features)) {
+          state.features = clone(payload.features);
+        }
+        if (Array.isArray(payload.primers)) {
+          state.primers = clone(payload.primers);
+        }
         revision += 1;
         history.push({ op, payload: clone(payload), revision });
         return buildResponse(req, AckStatus.ACCEPTED);
@@ -356,12 +364,12 @@ export function createMockAuthority(options) {
         return buildResponse(req, AckStatus.ACCEPTED);
       }
       case OperationKind.DELETE_FEATURE: {
-        const id = payload.id;
+        const ids = Array.isArray(payload.ids) ? payload.ids : [payload.id];
         const before = state.features.length;
-        state.features = state.features.filter(f => f.id !== id);
+        state.features = state.features.filter(f => !ids.includes(f.id));
         if (state.features.length === before) {
           return buildResponse(req, AckStatus.REJECTED, {
-            message: `delete_feature: id ${id} not found`
+            message: `delete_feature: ids ${JSON.stringify(ids)} not found`
           });
         }
         revision += 1;
@@ -385,12 +393,12 @@ export function createMockAuthority(options) {
         return buildResponse(req, AckStatus.ACCEPTED);
       }
       case OperationKind.DELETE_PRIMER: {
-        const id = payload.id;
+        const ids = Array.isArray(payload.ids) ? payload.ids : [payload.id];
         const before = state.primers.length;
-        state.primers = state.primers.filter(p => p.id !== id);
+        state.primers = state.primers.filter(p => !ids.includes(p.id));
         if (state.primers.length === before) {
           return buildResponse(req, AckStatus.REJECTED, {
-            message: `delete_primer: id ${id} not found`
+            message: `delete_primer: ids ${JSON.stringify(ids)} not found`
           });
         }
         revision += 1;

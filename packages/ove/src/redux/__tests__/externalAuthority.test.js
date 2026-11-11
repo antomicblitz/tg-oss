@@ -717,6 +717,109 @@ describe("real OVE action routing", () => {
     expect(authority.snapshot().features).toHaveLength(0);
   });
 
+  it("routes a multi-id DELETE_FEATURE as one transaction", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: {
+        sequence: "ACGT",
+        circular: false,
+        features: [
+          { id: "f-1", start: 0, end: 1, name: "a" },
+          { id: "f-2", start: 2, end: 3, name: "b" },
+          { id: "f-3", start: 1, end: 2, name: "c" }
+        ]
+      }
+    });
+    const operations = [];
+    const { mw } = makeRealActionMiddleware(authority, {
+      submit: async request => {
+        operations.push(request);
+        return authority.submit(request);
+      }
+    });
+    const { next } = recordingNext();
+
+    await mw(next)({
+      type: "DELETE_FEATURE",
+      meta: { editorName: "main" },
+      payload: ["f-1", { id: "f-2" }]
+    });
+
+    expect(operations).toHaveLength(1);
+    expect(operations[0].operation).toBe("delete_feature");
+    expect(operations[0].payload).toEqual({ ids: ["f-1", "f-2"] });
+    expect(authority.snapshot().features).toHaveLength(1);
+    expect(authority.snapshot().features[0].id).toBe("f-3");
+  });
+
+  it("rejects an empty or invalid DELETE_FEATURE id list", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGT", circular: false }
+    });
+    const { mw } = makeRealActionMiddleware(authority);
+    const { next, seen } = recordingNext();
+
+    await mw(next)({
+      type: "DELETE_FEATURE",
+      meta: { editorName: "main" },
+      payload: []
+    });
+    await mw(next)({
+      type: "DELETE_FEATURE",
+      meta: { editorName: "main" },
+      payload: ["f-1", { name: "no-id" }]
+    });
+
+    expect(seen.map(a => a.type)).toEqual([
+      "DELETE_FEATURE_REJECTED",
+      "DELETE_FEATURE_REJECTED"
+    ]);
+    expect(authority.revision()).toBe(0);
+  });
+
+  it("routes a confirmed linearize truncation as one set_circular transaction", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: {
+        sequence: "ACGTACGT",
+        circular: true,
+        features: [{ id: "f-1", start: 6, end: 2, name: "spanner" }]
+      }
+    });
+    const operations = [];
+    const { mw, applied } = makeRealActionMiddleware(authority, {
+      submit: async request => {
+        operations.push(request);
+        return authority.submit(request);
+      }
+    });
+    const { next } = recordingNext();
+
+    await mw(next)({
+      type: "UPDATE_CIRCULAR",
+      meta: {
+        editorName: "main",
+        openGeneTruncation: {
+          features: [{ id: "f-1", start: 6, end: 7, name: "spanner" }],
+          primers: []
+        }
+      },
+      payload: false
+    });
+
+    expect(operations).toHaveLength(1);
+    expect(operations[0].operation).toBe("set_circular");
+    expect(operations[0].payload).toEqual({
+      circular: false,
+      features: [{ id: "f-1", start: 6, end: 7, name: "spanner" }],
+      primers: []
+    });
+    expect(authority.snapshot().circular).toBe(false);
+    expect(authority.snapshot().features[0].end).toBe(7);
+    expect(applied.length).toBe(1);
+  });
+
   it("routes UPDATE_CIRCULAR as set_circular", async () => {
     const authority = createMockAuthority({
       documentId: "doc-1",

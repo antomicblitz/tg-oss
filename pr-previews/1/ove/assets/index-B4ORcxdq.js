@@ -114176,8 +114176,8 @@ function calculateNebTm(sequence2, { monovalentCationConc = 0.05, primerConc = 5
       }
       if (i2 < seq.length - 1) {
         const dimer = seq[i2] + seq[i2 + 1];
-        const complement2 = getComplementSequenceString(dimer).toUpperCase();
-        const dimerDuplex = `${dimer}/${complement2}`;
+        const complement3 = getComplementSequenceString(dimer).toUpperCase();
+        const dimerDuplex = `${dimer}/${complement3}`;
         if (!sequenceToEnthalpyMap[dimerDuplex] || !sequenceToEntropyMap[dimerDuplex]) {
           throw new Error(
             `Could not find value for ${dimerDuplex} of sequence ${sequence2}`
@@ -123832,7 +123832,7 @@ function parseJbeiXml(jbeiJson) {
     name: name2,
     features: (Array.isArray(features2) ? features2 : [features2]).map(
       ({
-        "seq:complement": complement2,
+        "seq:complement": complement3,
         "seq:label": label,
         "seq:type": type2,
         "seq:location": jbeiLocations
@@ -123855,7 +123855,7 @@ function parseJbeiXml(jbeiJson) {
           locations: locations.length > 1 ? locations : void 0,
           name: label,
           type: type2,
-          strand: complement2 ? -1 : 1
+          strand: complement3 ? -1 : 1
         };
       }
     )
@@ -148442,6 +148442,43 @@ __publicField(_Clipboard, "defaultProps", {
   className: "clipboard"
 });
 let Clipboard = _Clipboard;
+function annotationList(annotations) {
+  if (Array.isArray(annotations)) return annotations;
+  if (annotations && typeof annotations === "object") {
+    return Object.values(annotations);
+  }
+  return [];
+}
+__name(annotationList, "annotationList");
+function buildInsertOrReplaceMutation(seqDataToInsert, gesture = {}) {
+  const { caretPosition: caretPosition2, selectionLayer: selectionLayer2 } = gesture;
+  const insertedResidues = seqDataToInsert && seqDataToInsert.sequence || "";
+  let openGeneMutation;
+  if (caretPosition2 > -1) {
+    openGeneMutation = {
+      operation: "insert_bases",
+      payload: { position: caretPosition2, residues: insertedResidues }
+    };
+  } else if (selectionLayer2 && selectionLayer2.start >= 0) {
+    openGeneMutation = {
+      operation: "replace_bases",
+      payload: {
+        start: selectionLayer2.start,
+        end: selectionLayer2.end + 1,
+        replacement: insertedResidues
+      }
+    };
+  }
+  if (!openGeneMutation) return void 0;
+  const features2 = annotationList(seqDataToInsert && seqDataToInsert.features);
+  const primers2 = annotationList(seqDataToInsert && seqDataToInsert.primers);
+  if (features2.length > 0 || primers2.length > 0) {
+    openGeneMutation.features = features2;
+    openGeneMutation.primers = primers2;
+  }
+  return openGeneMutation;
+}
+__name(buildInsertOrReplaceMutation, "buildInsertOrReplaceMutation");
 let dragInProgress = false;
 let selectionStartOrEndGrabbed;
 let caretPositionOnDragStart;
@@ -150211,28 +150248,10 @@ const insertAndSelectHelper = /* @__PURE__ */ __name((_0) => __async(void 0, [_0
       throw new Error("bpLimit exceeded");
     }
   }
-  const insertedResidues = seqDataToInsert.sequence || "";
-  const hasAnnotations = Array.isArray(seqDataToInsert.features) && seqDataToInsert.features.length > 0 || Array.isArray(seqDataToInsert.primers) && seqDataToInsert.primers.length > 0;
-  let openGeneMutation;
-  if (caretPosition2 > -1) {
-    openGeneMutation = {
-      operation: "insert_bases",
-      payload: { position: caretPosition2, residues: insertedResidues }
-    };
-  } else if (selectionLayer2 && selectionLayer2.start >= 0) {
-    openGeneMutation = {
-      operation: "replace_bases",
-      payload: {
-        start: selectionLayer2.start,
-        end: selectionLayer2.end + 1,
-        replacement: insertedResidues
-      }
-    };
-  }
-  if (openGeneMutation && hasAnnotations) {
-    openGeneMutation.features = Array.isArray(seqDataToInsert.features) ? seqDataToInsert.features : [];
-    openGeneMutation.primers = Array.isArray(seqDataToInsert.primers) ? seqDataToInsert.primers : [];
-  }
+  const openGeneMutation = buildInsertOrReplaceMutation(seqDataToInsert, {
+    caretPosition: caretPosition2,
+    selectionLayer: selectionLayer2
+  });
   updateSequenceData2(
     newSeqData,
     openGeneMutation ? { openGeneMutation } : void 0
@@ -177161,12 +177180,48 @@ const COMPLEMENT = Object.freeze({
   C: "G",
   G: "C",
   U: "A",
-  N: "N"
+  N: "N",
+  R: "Y",
+  Y: "R",
+  S: "S",
+  W: "W",
+  K: "M",
+  M: "K",
+  B: "V",
+  V: "B",
+  D: "H",
+  H: "D",
+  a: "t",
+  t: "a",
+  c: "g",
+  g: "c",
+  u: "a",
+  n: "n",
+  r: "y",
+  y: "r",
+  s: "s",
+  w: "w",
+  k: "m",
+  m: "k",
+  b: "v",
+  v: "b",
+  d: "h",
+  h: "d",
+  ".": "."
 });
+function complement2(sequence2) {
+  let out = "";
+  for (let i2 = 0; i2 < sequence2.length; i2 += 1) {
+    const base = sequence2[i2];
+    out += COMPLEMENT[base] || base;
+  }
+  return out;
+}
+__name(complement2, "complement");
 function reverseComplement(sequence2) {
   let out = "";
   for (let i2 = sequence2.length - 1; i2 >= 0; i2 -= 1) {
-    const base = sequence2[i2].toUpperCase();
+    const base = sequence2[i2];
     out += COMPLEMENT[base] || base;
   }
   return out;
@@ -177280,6 +177335,11 @@ function buildRealRequest(action2, canonicalSequence) {
       }
       if (reverseComplement(canonicalSequence) === newSequence) {
         return { operation: "reverse_complement", payload: {} };
+      }
+      if (complement2(canonicalSequence) === newSequence) {
+        return {
+          error: "SEQUENCE_DATA_UPDATE is a whole-molecule complement with annotation strand changes; the wire protocol has no complement operation"
+        };
       }
       if (isRotation(canonicalSequence, newSequence)) {
         return {

@@ -14,6 +14,7 @@ import { describe, expect, it } from "bun:test";
 
 import {
   createExternalAuthorityMiddleware,
+  diffResidues,
   EXTERNAL_AUTHORITY_CONSTANTS
 } from "../externalAuthority.js";
 import {
@@ -237,7 +238,7 @@ describe("createExternalAuthorityMiddleware", () => {
     expect(seen[0].payload.message).toMatch(/connection refused/);
   });
 
-  it("routes VE_UNDO / VE_REDO through REQUEST_UNDO / REQUEST_REDO", async () => {
+  it("routes VE_UNDO / VE_REDO through REQUEST_UNDO / REQUEST_REDO without a local undo", async () => {
     const authority = createMockAuthority({
       documentId: "doc-1",
       initial: { sequence: "ACGT", circular: false }
@@ -254,9 +255,13 @@ describe("createExternalAuthorityMiddleware", () => {
     );
     expect(authority.revision()).toBe(1);
 
+    const operations = [];
     const store = makeStoreStub();
     const mw = createExternalAuthorityMiddleware({
-      submit: authority.submit,
+      submit: async request => {
+        operations.push(request.operation);
+        return authority.submit(request);
+      },
       documentId: "doc-1",
       surfaceId: "map"
     })(store);
@@ -265,8 +270,11 @@ describe("createExternalAuthorityMiddleware", () => {
     await mw(next)({ type: "VE_UNDO", meta: { editorName: "main" } });
     await mw(next)({ type: "VE_REDO", meta: { editorName: "main" } });
 
-    // ACCEPTED — original actions flow through.
-    expect(seen.map(a => a.type)).toEqual(["VE_UNDO", "VE_REDO"]);
+    // Python owns the only undo stack: the requests go out, but the local
+    // vectorEditorMiddleware must not see VE_UNDO / VE_REDO and pop its own
+    // (empty) stack.
+    expect(operations).toEqual(["request_undo", "request_redo"]);
+    expect(seen).toEqual([]);
     // Authority has not bumped revision for undo/redo (per mock contract).
     expect(authority.revision()).toBe(1);
   });
@@ -354,6 +362,225 @@ describe("createExternalAuthorityMiddleware", () => {
         }),
       /requires options.surfaceId/
     );
+  });
+});
+
+describe("diffResidues", () => {
+  it("derives a pure insertion", () => {
+    expect(diffResidues("ACGT", "ACGGGT")).toEqual({
+      start: 3,
+      end: 3,
+      replacement: "GG"
+    });
+  });
+
+  it("derives a pure deletion", () => {
+    expect(diffResidues("ACGTACGT", "ACGT")).toEqual({
+      start: 4,
+      end: 8,
+      replacement: ""
+    });
+  });
+
+  it("derives a substitution", () => {
+    expect(diffResidues("ACGT", "ATGT")).toEqual({
+      start: 1,
+      end: 2,
+      replacement: "T"
+    });
+  });
+
+  it("returns an empty mutation for identical sequences", () => {
+    expect(diffResidues("ACGT", "ACGT")).toEqual({
+      start: 4,
+      end: 4,
+      replacement: ""
+    });
+  });
+});
+
+describe("real OVE action routing", () => {
+  function makeRealActionMiddleware(authority, extra = {}) {
+    const applied = [];
+    const mw = createExternalAuthorityMiddleware({
+      submit: authority.submit,
+      documentId: "doc-1",
+      surfaceId: "map",
+      revision: () => authority.revision(),
+      getCanonicalSequence: () => authority.snapshot().sequence,
+      getCanonicalSnapshot: () => authority.snapshot(),
+      applySnapshot: snap => applied.push(snap),
+      ...extra
+    })(makeStoreStub());
+    return { mw, applied };
+  }
+
+  it("routes SEQUENCE_DATA_UPDATE as replace_bases and applies the canonical snapshot", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGTACGT", circular: true }
+    });
+    const { mw, applied } = makeRealActionMiddleware(authority);
+    const { next, seen } = recordingNext();
+
+    await mw(next)({
+      type: "SEQUENCE_DATA_UPDATE",
+      meta: { editorName: "main" },
+      payload: { sequence: "ACGT", circular: true }
+    });
+
+    // The local full snapshot is NOT forwarded; the canonical one is applied.
+    expect(seen.length).toBe(0);
+    expect(authority.revision()).toBe(1);
+    expect(authority.snapshot().sequence).toBe("ACGT");
+    expect(applied.length).toBe(1);
+    expect(applied[0].sequence).toBe("ACGT");
+  });
+
+  it("rejects an annotation-only SEQUENCE_DATA_UPDATE and rebroadcasts canonical", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGT", circular: false }
+    });
+    const { mw, applied } = makeRealActionMiddleware(authority);
+    const { next, seen } = recordingNext();
+
+    await mw(next)({
+      type: "SEQUENCE_DATA_UPDATE",
+      meta: { editorName: "main" },
+      payload: {
+        sequence: "ACGT",
+        features: [{ id: "f-1", start: 0, end: 1, name: "x" }]
+      }
+    });
+
+    expect(seen.length).toBe(1);
+    expect(seen[0].type).toBe("SEQUENCE_DATA_UPDATE_REJECTED");
+    expect(seen[0].payload.message).toMatch(/annotations only/);
+    expect(authority.revision()).toBe(0);
+    expect(applied.length).toBe(1);
+    expect(applied[0].sequence).toBe("ACGT");
+  });
+
+  it("rejects a reverse-complement SEQUENCE_DATA_UPDATE instead of corrupting annotations", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "AAGC", circular: false }
+    });
+    const { mw, applied } = makeRealActionMiddleware(authority);
+    const { next, seen } = recordingNext();
+
+    // Reverse complement of AAGC is GCTT.
+    await mw(next)({
+      type: "SEQUENCE_DATA_UPDATE",
+      meta: { editorName: "main" },
+      payload: { sequence: "GCTT" }
+    });
+
+    expect(seen.length).toBe(1);
+    expect(seen[0].type).toBe("SEQUENCE_DATA_UPDATE_REJECTED");
+    expect(seen[0].payload.message).toMatch(/reverse complement/);
+    expect(authority.revision()).toBe(0);
+    expect(applied.length).toBe(1);
+    expect(applied[0].sequence).toBe("AAGC");
+  });
+
+  it("rejects an origin-rotation SEQUENCE_DATA_UPDATE instead of corrupting annotations", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGTACGT", circular: true }
+    });
+    const { mw, applied } = makeRealActionMiddleware(authority);
+    const { next, seen } = recordingNext();
+
+    await mw(next)({
+      type: "SEQUENCE_DATA_UPDATE",
+      meta: { editorName: "main" },
+      payload: { sequence: "GTACGTAC", circular: true }
+    });
+
+    expect(seen.length).toBe(1);
+    expect(seen[0].type).toBe("SEQUENCE_DATA_UPDATE_REJECTED");
+    expect(seen[0].payload.message).toMatch(/origin rotation/);
+    expect(authority.revision()).toBe(0);
+    expect(applied.length).toBe(1);
+    expect(applied[0].sequence).toBe("ACGTACGT");
+  });
+
+  it("routes UPSERT_FEATURE and applies the canonical snapshot", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGT", circular: false }
+    });
+    const { mw, applied } = makeRealActionMiddleware(authority);
+    const { next, seen } = recordingNext();
+
+    await mw(next)({
+      type: "UPSERT_FEATURE",
+      meta: { editorName: "main" },
+      payload: { id: "f-1", start: 0, end: 3, name: "promoter" }
+    });
+
+    expect(seen.length).toBe(0);
+    expect(authority.revision()).toBe(1);
+    expect(authority.snapshot().features).toHaveLength(1);
+    expect(applied.length).toBe(1);
+    expect(applied[0].features).toHaveLength(1);
+  });
+
+  it("routes DELETE_FEATURE by id", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: {
+        sequence: "ACGT",
+        circular: false,
+        features: [{ id: "f-1", start: 0, end: 3, name: "promoter" }]
+      }
+    });
+    const { mw } = makeRealActionMiddleware(authority);
+    const { next } = recordingNext();
+
+    await mw(next)({
+      type: "DELETE_FEATURE",
+      meta: { editorName: "main" },
+      payload: "f-1"
+    });
+
+    expect(authority.revision()).toBe(1);
+    expect(authority.snapshot().features).toHaveLength(0);
+  });
+
+  it("routes UPDATE_CIRCULAR as set_circular", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGT", circular: true }
+    });
+    const { mw } = makeRealActionMiddleware(authority);
+    const { next } = recordingNext();
+
+    await mw(next)({
+      type: "UPDATE_CIRCULAR",
+      meta: { editorName: "main" },
+      payload: false
+    });
+
+    expect(authority.revision()).toBe(1);
+    expect(authority.snapshot().circular).toBe(false);
+  });
+
+  it("swallows VE_UNDO so the local undo middleware cannot run first", async () => {
+    const authority = createMockAuthority({
+      documentId: "doc-1",
+      initial: { sequence: "ACGT", circular: false }
+    });
+    const { mw } = makeRealActionMiddleware(authority);
+    const { next, seen } = recordingNext();
+
+    await mw(next)({ type: "VE_UNDO", meta: { editorName: "main" } });
+
+    // Python owns the undo stack; the action must not reach the local
+    // vectorEditorMiddleware (which would pop its own stack).
+    expect(seen.length).toBe(0);
   });
 });
 

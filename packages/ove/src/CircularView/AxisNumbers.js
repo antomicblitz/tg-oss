@@ -11,7 +11,10 @@ export function AxisNumbers({
 }) {
   const shouldFlip = shouldFlipText(annotation.startAngle + rotationRadians);
   return (
-    <g>
+    // Reason: the tick and its number are ruler chrome, not annotation data, so
+    // they carry a class the dark theme can recolour. Without it the black tick
+    // is invisible on a dark canvas.
+    <g className="veCircularViewAxisNumber">
       <rect y={-17} width={1} height={5} fill="black"></rect>
       {!hideNumbers && (
         <text

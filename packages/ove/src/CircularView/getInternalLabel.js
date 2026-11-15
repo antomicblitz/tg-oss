@@ -22,9 +22,17 @@ export function getInternalLabel({
         transform={
           (revTransform || "") + (angleAdjust ? ` rotate(${angleAdjust})` : "")
         }
-        fill={
-          isPart ? "#ac68cc" : Color(colorToUse).isDark() ? "white" : "black"
-        }
+        // Reason: an internal label sits on the annotation's own fill, so its
+        // colour must follow that fill's luminance in both themes. An inline
+        // style keeps that choice authoritative over the theme's neutral text
+        // rule; a presentation attribute would lose to it.
+        style={{
+          fill: isPart
+            ? "#ac68cc"
+            : Color(colorToUse).isDark()
+              ? "white"
+              : "black"
+        }}
         dy={-3}
       >
         <textPath

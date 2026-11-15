@@ -37,7 +37,7 @@
     linear-gradient(to right, #ccc 50%, #4ac5ed 0);
 }
 .bp3-dark .circularViewMinimap {
-  --bg: #293742;
+  --bg: var(--og-color-ove-surface, #26282c);
 }
 .veCircularView .ve-monospace-font.veCircularViewInternalLabelText {
   font-size: 13px;

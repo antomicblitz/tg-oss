@@ -1,110 +1,183 @@
+/*
+ * Dark theme for the pinned OVE renderer.
+ *
+ * The host puts `bp3-dark` on <html> (the shared dark-mode contract), so every
+ * rule here also reaches OVE's tooltips, context menus and any node Blueprint
+ * renders into a body portal. Light mode is untouched: each rule below is either
+ * a `.bp3-dark` rule or the neutral base the fork already shipped.
+ *
+ * Colour comes from the six OpenGene OVE bridge tokens, always read as
+ * `var(--token, <literal>)` so the fork's standalone harness still renders when
+ * the shell is not present. Feature, primer and part fills are scientific data:
+ * no rule here rewrites, recomputes or reorders them, and none paints a neutral
+ * colour over an annotation. Only chrome the fork owns is themed (canvas,
+ * rulers, ticks, label connectors, caret, selection, neutral text).
+ *
+ * The previous file forced part arcs and part labels to #df7ff1 / #ac68cc.
+ * Those are data-driven annotation colours, so the overrides were removed: a
+ * part keeps the colour the document gives it in both themes.
+ */
+
+/* ---- canvas -------------------------------------------------------------
+ * The product editor paints its own surface; a static preview mounts
+ * CircularView/LinearView directly (`tg-simple-dna-view`) and carries the same
+ * surface so a preview reads as an OVE canvas rather than page background.
+ */
+.bp3-dark .veEditor:not(.tg-simple-dna-view) {
+  background: var(--og-color-ove-surface, #26282c) !important;
+}
+.bp3-dark .veEditor.tg-simple-dna-view {
+  background: var(--og-color-ove-surface, #26282c);
+}
+.bp3-dark .veWhiteBackground {
+  background: var(--og-color-ove-surface, #26282c);
+}
+.bp3-dark .alignmentViewTrackContainer {
+  background: var(--og-color-ove-grid, #3d4046);
+}
+.bp3-dark .alignmentViewTrackContainer text {
+  fill: var(--og-color-ove-text, #e8e9ea) !important;
+}
+.bp3-dark .veToolbar-outer {
+  background: var(--og-color-ove-surface, #26282c);
+}
+
+/* ---- rulers, ticks and coordinate text ---- */
 .bp3-dark .veAxisLine {
-  stroke: #f5f8fa !important;
+  stroke: var(--og-color-ove-axis, #a3a7ad) !important;
 }
 .bp3-dark .veAxisTick,
 .bp3-dark .veCutsite {
-  fill: #f5f8fa;
+  fill: var(--og-color-ove-axis, #a3a7ad);
+}
+.bp3-dark .veCircularViewAxisNumber rect,
+.bp3-dark .veCircularViewAxisNumber text {
+  fill: var(--og-color-ove-axis, #a3a7ad);
+}
+.bp3-dark [data-tick-mark] {
+  fill: var(--og-color-ove-axis, #a3a7ad) !important;
 }
 
-.bp3-dark .veEditor:not(.tg-simple-dna-view) {
-  background: #293742 !important;
+/* ---- neutral text -------------------------------------------------------
+ * Labels that carry their own colour (a feature, primer or enzyme colour) set
+ * it as an inline style or presentation attribute, so they keep that colour;
+ * this rule only replaces the parts that would otherwise be black.
+ */
+.bp3-dark .veEditor text {
+  fill: var(--og-color-ove-text, #e8e9ea);
+}
+.bp3-dark .veEditor .veRowItem .veLabelText {
+  color: var(--og-color-ove-text, #e8e9ea);
+}
+.bp3-dark .veRowViewPartsContainer text,
+.bp3-dark .veLabelText.black {
+  fill: var(--og-color-ove-text, #e8e9ea) !important;
+}
+/* The linear map needs no text rule of its own: LinearView mounts inside
+ * `.veEditor`, so the neutral rule above reaches it, and a label that carries
+ * the fill-contrast colour (inline style) keeps that colour instead of being
+ * forced to the neutral one. */
+
+/* The complement strand stays distinguishable from the forward strand: same
+ * text token, muted, instead of the light theme's fixed grey. */
+.bp3-dark .ve-sequence-reverse {
+  fill: var(--og-color-ove-text, #e8e9ea);
+  opacity: 0.65;
 }
 
+.bp3-dark .veSequenceName,
+.bp3-dark .veCircularViewMiddleOfVectorText {
+  color: var(--og-color-ove-text, #e8e9ea);
+}
+
+/* ---- label connectors ---- */
+.bp3-dark .veLabelLine {
+  stroke: var(--og-color-ove-axis, #a3a7ad) !important;
+  background: var(--og-color-ove-axis, #a3a7ad) !important;
+}
+/* A grouped label paints its own background rect so the text stays readable
+ * over the map; it needs the surface colour rather than the literal white. */
+.bp3-dark .veLabelGroupBackground {
+  fill: var(--og-color-ove-surface, #26282c);
+  stroke: var(--og-color-ove-axis, #a3a7ad);
+}
+
+/* ---- caret -------------------------------------------------------------- */
+.bp3-dark .veCaret {
+  stroke: var(--og-color-ove-caret, #e8e9ea);
+  background: var(--og-color-ove-caret, #e8e9ea);
+}
+.bp3-dark .veEditor .veRowViewCaret {
+  background: var(--og-color-ove-caret, #e8e9ea) !important;
+}
+.bp3-dark .veEditor .vePolygonCaretHandle {
+  fill: var(--og-color-ove-caret, #e8e9ea);
+}
+.bp3-dark .veEditor :not(.veSearchLayer).selectionLayerCaret::after {
+  border-top: 10px solid var(--og-color-ove-caret, #e8e9ea);
+}
+
+/* ---- selection ---------------------------------------------------------- */
+.bp3-dark .veVectorInteractionWrapper .veSelectionLayer:not(.veCaret),
+.bp3-dark .veVectorInteractionWrapper:focus .veSelectionLayer:not(.veCaret),
+.bp3-dark .tg-simple-dna-view .veSelectionLayer:not(.veCaret),
+.bp3-dark .veRowViewSelectionLayer {
+  fill: var(--og-color-ove-selection, #6cb0ff);
+  background: var(--og-color-ove-selection, #6cb0ff);
+}
+.bp3-dark .tag-selection.selected {
+  border-color: var(--og-color-ove-selection, #6cb0ff) !important;
+}
+
+/* ---- translation lane ---------------------------------------------------
+ * An amino-acid glyph is filled black on purpose (it sits on the residue's own
+ * fill colour); the coordinate number below it sits on the canvas and follows
+ * the ruler colour instead of disappearing into the dark surface.
+ */
+.bp3-dark .translationLayer text {
+  fill: black !important;
+}
+.bp3-dark .translationLayer text.aminoAcidNumber {
+  fill: var(--og-color-ove-text, #e8e9ea) !important;
+  stroke: var(--og-color-ove-text, #e8e9ea) !important;
+}
+.bp3-dark .aminoAcidNumber {
+  stroke: var(--og-color-ove-text, #e8e9ea) !important;
+  background: var(--og-color-ove-text, #e8e9ea) !important;
+}
+/* ---- editor chrome outside the map/sequence canvas ---- */
+.bp3-dark .veEditor .ve-draggable-tabs {
+  color: var(--og-color-ove-text, #e8e9ea) !important;
+  border-bottom: 1px solid var(--og-color-ove-grid, #3d4046);
+}
+.bp3-dark .veEditor .ve-draggable-tabs.is-dragging-over {
+  background: var(--og-color-ove-grid, #3d4046);
+}
+.bp3-dark .veTabActive {
+  color: #48aff0 !important;
+  border-bottom-color: #48aff0 !important;
+}
+.bp3-dark .menu-bar {
+  background: none !important;
+}
+
+/* ---- base rules that are true in both themes ---------------------------- */
 .veLabelLine,
 .aminoAcidNumber {
   stroke: black;
   background: black;
 }
-.bp3-dark .veCaret,
-.bp3-dark .veLabelLine {
-  stroke: white;
-  background: white;
-}
-.bp3-dark .veLabelLine,
-.bp3-dark .aminoAcidNumber {
-  stroke: #f5f8fa !important;
-  background: #f5f8fa !important;
-}
-
-.bp3-dark .veEditor .veRowViewCaret {
-  background: #f5f8fa !important;
-}
-
-.bp3-dark .veEditor text {
-  fill: #f5f8fa;
-}
-
-.bp3-dark .veRowViewPartsContainer text,
-.bp3-dark .veLabelText.black {
-  fill: #f5f8fa !important;
-}
-
-.bp3-dark .tag-selection.selected {
-  border-color: #f5f8fa !important;
-}
-
-.bp3-dark .veLinearView text {
-  fill: #f5f8fa !important;
-}
-.bp3-dark .veCircularViewAxisNumber rect {
-  fill: #f5f8fa !important;
-}
-
-.bp3-dark .menu-bar {
-  background: none !important;
-}
-
 .alignmentViewTrackContainer {
   background: white;
-}
-.bp3-dark .alignmentViewTrackContainer {
-  background: #293742;
-}
-.bp3-dark .alignmentViewTrackContainer text {
-  fill: #f5f8fa !important;
-}
-.bp3-dark [data-tick-mark] {
-  fill: #f5f8fa !important;
-}
-
-.bp3-dark .rowViewTextContainer *::selection {
-  fill: #f5f8fa !important;
-}
-.bp3-dark .veRowViewAxis *::selection {
-  fill: #f5f8fa !important;
-}
-
-/* .bp3-dark .veRowViewAxis text {
-  stroke: #f5f8fa !important;
-} */
-
-.bp3-dark .translationLayer text {
-  fill: black !important;
 }
 
 .bp3-dark .step-group.active .step-text {
   color: #2b95d6 !important;
 }
-
 .bp3-dark .step-group.active .step-mark {
   background-color: #2b95d6 !important;
   border-color: #2b95d6 !important;
 }
-
 .bp3-dark .tool-select-item:hover {
   background: #0e5a8a !important;
-}
-
-.bp3-dark .veWhiteBackground {
-  background: #293742;
-}
-
-.bp3-dark .vePart path:first-of-type {
-  stroke-width: 1;
-  stroke: #df7ff1 !important;
-}
-
-.bp3-dark .vePart .veLabelText,
-.bp3-dark .veLabelText.vePart {
-  fill: #ac68cc !important;
 }

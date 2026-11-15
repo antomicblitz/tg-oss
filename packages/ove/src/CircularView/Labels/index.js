@@ -346,6 +346,7 @@ const DrawLabelGroup = withHover(function ({
       <PutMyParentOnTop editorName={editorName} key="gGroup">
         <g className={className + " veLabel topLevelLabelGroup"}>
           <rect
+            className="veLabelGroupBackground"
             onMouseOver={cancelFn}
             // zIndex={10}
             x={labelXStart - 4}
@@ -408,7 +409,9 @@ const DrawLabelGroup = withHover(function ({
         style={{
           fontSize: fontWidth * fontWidthToFontSize,
           fontStyle: label.fontStyle,
-          fill: label.color || "black"
+          // A label on the canvas, not on a fill, so its neutral colour is the
+          // theme's label text. An annotation-coloured label keeps its colour.
+          fill: label.color || "var(--og-color-ove-text, black)"
           // stroke: label.color ? label.color : "black"
         }}
       >
@@ -483,7 +486,9 @@ const DrawGroupInnerLabel = withHover(
         onContextMenu={label.onContextMenu}
         dy={index === 0 ? dy / 2 : dy}
         style={{
-          fill: label.color ? label.color : "black",
+          fill: label.color
+            ? label.color
+            : "var(--og-color-ove-text, black)",
           fontStyle: label.fontStyle
         }}
         {...{ onMouseOver }}

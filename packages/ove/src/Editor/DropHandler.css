@@ -8,12 +8,21 @@
   top: 30%;
   width: 310px;
   border-radius: 3px;
-  border: 7px dotted lightblue;
-  background: rgb(232, 232, 232);
+  /* Reason: a drag reveals this card over the canvas, so its surface, text and
+   * guide border follow the OVE bridge tokens instead of a light literal. The
+   * fallbacks keep the fork's standalone harness rendering. */
+  border: 7px dotted var(--og-color-ove-axis, lightblue);
+  background: var(--og-color-ove-surface, rgb(232, 232, 232));
+  color: var(--og-color-ove-text, #1f2328);
   padding: 30px;
   font-size: 24px;
   opacity: 0;
   transition: 0.5s all;
+}
+.bp3-dark .dropzone-dragging-message {
+  background: var(--og-color-ove-surface, #26282c);
+  color: var(--og-color-ove-text, #e8e9ea);
+  border-color: var(--og-color-ove-axis, #a3a7ad);
 }
 .veEditor.isActive .dropzone-dragging-message {
   z-index: 10;

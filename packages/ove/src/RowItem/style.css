@@ -8,7 +8,7 @@
 }
 
 .bp3-dark .cutsiteLabelSelectionLayer {
-  background: #606468 !important;
+  background: var(--og-color-ove-grid, #3d4046) !important;
 }
 .cutsiteLabelSelectionLayer {
   background: #d8e1e8 !important;

@@ -73,6 +73,13 @@
 .bp3-dark .veLabelText.black {
   fill: var(--og-color-ove-text, #e8e9ea) !important;
 }
+/* The map's outside labels are ordinary text on the canvas. The fork paints
+ * them with a literal black default (and names that choice as the `black`
+ * class), so the dark theme restates the token with enough specificity to win
+ * over the inline style without touching a label that carries its own colour. */
+.bp3-dark .veEditor .veLabels text.veCircularViewLabelText.black {
+  fill: var(--og-color-ove-text, #e8e9ea) !important;
+}
 /* The linear map needs no text rule of its own: LinearView mounts inside
  * `.veEditor`, so the neutral rule above reaches it, and a label that carries
  * the fill-contrast colour (inline style) keeps that colour instead of being
@@ -88,6 +95,34 @@
 .bp3-dark .veSequenceName,
 .bp3-dark .veCircularViewMiddleOfVectorText {
   color: var(--og-color-ove-text, #e8e9ea);
+}
+
+/* ---- cut-site (enzyme) labels --------------------------------------------
+ * An enzyme name is chrome, not annotation data: the fork's pastel enzyme
+ * palette (salmon / lightblue / lightgrey) reaches only 2.5:1 on white and
+ * 1.3:1 on the dark cut-site chip, so the label colour is replaced by a single
+ * AA-safe one. Light borrows the shell's danger colour (the same intent the
+ * shell already declares for this label); dark uses the neutral label text,
+ * because no dark danger value exists for the fork to read.
+ *
+ * `text.veCutsite` is the circular map's label; `.veCutsiteLabel` is the row
+ * view's label div. The cut-site tick marks share `veCutsite` and are rects, so
+ * the element qualifier keeps them on the axis colour.
+ */
+text.veCutsite,
+.veCutsiteLabel {
+  fill: var(--og-color-danger, #a21b1b) !important;
+}
+.bp3-dark .veEditor text.veCutsite,
+.bp3-dark .veEditor .veCutsiteLabel {
+  fill: var(--og-color-ove-text, #e8e9ea) !important;
+  color: var(--og-color-ove-text, #e8e9ea) !important;
+}
+
+/* The 5'/3' strand markers are 9px text on the canvas; the shell's muted token
+ * has no dark value yet, so the OVE axis token carries them until it does. */
+.bp3-dark .veEditor .tg-prime-direction {
+  color: var(--og-color-ove-axis, #a3a7ad) !important;
 }
 
 /* ---- label connectors ---- */

@@ -349,7 +349,8 @@ function DrawAnnotationInner({
   passAnnotation,
   ellipsizedName,
   angleAdjust,
-  rotationRadians
+  rotationRadians,
+  editorName
 }) {
   const sharedProps = {
     style: noTitle ? undefined : { cursor: "pointer" },
@@ -396,6 +397,7 @@ function DrawAnnotationInner({
         )}
         <Annotation
           {...(passAnnotation && { annotation })}
+          editorName={editorName}
           annotationType={annotationType}
           arrowheadType={annotation.arrowheadType}
           totalAngle={totalAngle}

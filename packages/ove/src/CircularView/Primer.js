@@ -1,5 +1,8 @@
 import React from "react";
-import { getStripedPattern } from "../utils/editorUtils";
+import {
+  getStripedPattern,
+  getStripedPatternId
+} from "../utils/editorUtils";
 import drawDirectedPiePiece from "./drawDirectedPiePiece";
 import { getInternalLabel } from "./getInternalLabel";
 
@@ -11,6 +14,7 @@ export default function CircularPrimer(props) {
     annotationHeight,
     totalAngle,
     id,
+    editorName,
     labelNeedsFlip,
     ellipsizedName
   } = props;
@@ -26,13 +30,13 @@ export default function CircularPrimer(props) {
   });
   return (
     <React.Fragment>
-      {getStripedPattern({ color, id })}
+      {getStripedPattern({ color, id, editorName })}
       <path
         className="vePrimer veCircularViewPrimer"
         id={id}
         strokeWidth=".5"
         stroke="black"
-        fill={`url(#diagonalHatch-${id})`}
+        fill={`url(#${getStripedPatternId(editorName, id)})`}
         d={path.print()}
       />
       {getInternalLabel({ ...props, colorToUse: color, textPath })}

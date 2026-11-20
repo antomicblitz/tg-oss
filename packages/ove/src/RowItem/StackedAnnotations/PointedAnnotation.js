@@ -8,7 +8,10 @@ import { doesLabelFitInAnnotation, getAnnotationTextWidth } from "../utils";
 import { noop } from "lodash-es";
 import getAnnotationClassnames from "../../utils/getAnnotationClassnames";
 import { ANNOTATION_LABEL_FONT_WIDTH } from "../constants";
-import { getStripedPattern } from "../../utils/editorUtils";
+import {
+  getStripedPattern,
+  getStripedPatternId
+} from "../../utils/editorUtils";
 import { partOverhangs } from "../partOverhangs";
 import { Tooltip } from "@blueprintjs/core";
 
@@ -112,6 +115,7 @@ function PointedAnnotation(props) {
     customName,
     type,
     readOnly,
+    editorName,
     isStriped,
     onMouseLeave,
     onMouseOver,
@@ -300,13 +304,17 @@ function PointedAnnotation(props) {
           })}
         </title>
       )}
-      {isStriped && getStripedPattern({ color, id })}
+      {isStriped && getStripedPattern({ color, id, editorName })}
 
       <path
         strokeWidth="1"
         stroke={stroke || "black"}
         opacity={opacity}
-        fill={isStriped ? `url(#diagonalHatch-${id})` : fill || color}
+        fill={
+          isStriped
+            ? `url(#${getStripedPatternId(editorName, id)})`
+            : fill || color
+        }
         transform={
           forward
             ? null

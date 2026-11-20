@@ -173,10 +173,26 @@ export function getSelFromWrappedAddon(selectionLayer, sequenceLength) {
   return selToUse;
 }
 
-export function getStripedPattern({ color, id }) {
+/**
+ * The hatch pattern id for one annotation in one editor.
+ *
+ * OpenGene imports core annotation ids, so the same primer carries the same
+ * id in every mounted editor: the map, the sequence view and the dialog
+ * preview. A pattern id derived from the annotation id alone therefore
+ * collides across the editors' separate `<svg>` roots, and the browser
+ * resolves `url(#...)` to the first definition in the document, leaving every
+ * later editor with an unpainted hatch (a primer colour that silently does
+ * nothing). The editor name is unique per mounted surface, so scoping the id
+ * with it keeps each editor's pattern its own.
+ */
+export function getStripedPatternId(editorName, id) {
+  return `diagonalHatch-${editorName || "editor"}-${id}`;
+}
+
+export function getStripedPattern({ color, id, editorName }) {
   return (
     <pattern
-      id={`diagonalHatch-${id}`}
+      id={getStripedPatternId(editorName, id)}
       patternUnits="userSpaceOnUse"
       width="4"
       height="4"
